@@ -25,7 +25,7 @@ This repository brings together every script required to take a **public YouTube
 # 1 – create model folder
 mkdir -p utils/models
 
-# 2 – copy the pre‑trained models into it
+# 2 – copy the pre‑trained models into it. Here's the link of the model for download: https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN
 cp /path/to/lid.176.bin utils/models/
 
 # 3 – create a Python 3.11 virtual‑env
