@@ -34,6 +34,13 @@ from nemo.collections.asr.models.aed_multitask_models import (
 from nemo.collections.asr.models.rnnt_bpe_models import EncDecRNNTBPEModel
 from pyctcdecode import build_ctcdecoder
 from transformers import pipeline as hf_pipeline
+import os
+#current_dir = os.path.dirname(os.path.abspath(__file__))
+#scripts_dir = os.path.join(current_dir, "..", "scripts")
+#sys.path.insert(0, os.path.abspath(scripts_dir))
+#from clean_and_expand import clean_text
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from scripts.clean_and_expand import clean_text
 
 # project local
 from segment import Segmenter
@@ -194,37 +201,6 @@ def choose_language(text: str, lid, conf_delta: float = 0.2) -> Tuple[str, float
         return "ca", c2 if l2 == "ca" else 0.01
     return l1, c1
 
-
-def numbers_to_words(txt: str, tgt_lang: str) -> str:
-    """
-    Replace every integer in *txt* with its cardinal representation
-    in Catalan (``tgt_lang == 'cat'``) or Spanish (``'spa'``) using
-    ``num2words``.
-    """
-    lang_map = {"cat": "ca", "spa": "es"}
-    n2w_lang = lang_map.get(tgt_lang, "en")
-
-    def _replace(match: re.Match[str]) -> str:
-        try:
-            return num2words(int(match.group()), lang=n2w_lang)
-        except Exception:
-            return match.group()  # fallback: keep the numeral
-
-    return re.sub(r"\d+", _replace, txt)
-
-
-def clean_text(text: str, label: str) -> str:
-    text = re.sub(r"(\d+)[.,](\d+)", r"\1\2", text)
-    text = re.sub(r"\([^)]*\)", "", text).replace("...", ".")
-    if label == "__label__ca":
-        text = numbers_to_words(text.replace("%", " per cent"), "cat")
-    elif label == "__label__es":
-        text = numbers_to_words(text.replace("%", " por ciento"), "spa")
-    forbidden = set(",;:?¿«»-¡!@*{}[]=/\\&#…")
-    text = "".join(ch if ch not in forbidden else " " for ch in text)
-    return " ".join(text.split()).lower()
-
-
 def build_manifest(meta_path: Path, lid_model) -> Path:
     """Return a NeMo manifest covering the whole video."""
     session_id = meta_path.stem.replace("_metadata", "")
@@ -245,11 +221,10 @@ def build_manifest(meta_path: Path, lid_model) -> Path:
             continue
         src = " ".join(tokens)
         lang, conf = choose_language(src, lid_model)
-        cleaned = clean_text(src, f"__label__{lang}")
-
+    
         entries.append({
             "audio_filepath": str(wav.resolve()),
-            "text": cleaned,
+            "text": src,
             "speaker": "unknown",
             "language": f"{lang}__{conf:.2f}",
         })
@@ -262,7 +237,6 @@ def build_manifest(meta_path: Path, lid_model) -> Path:
             json.dump(e, f, ensure_ascii=False)
             f.write("\n")
     return manifest_fp
-
 
 # main
 def main() -> None:
@@ -309,7 +283,7 @@ def main() -> None:
         "align_using_pred_text=false",
         "transcribe_device=cpu",
         "viterbi_device=cpu",
-        "additional_segment_grouping_separator=.",
+        "additional_segment_grouping_separator=|",
         "hydra.run.dir=.",
     ], check=True)
 
@@ -358,12 +332,23 @@ def main() -> None:
                 model = load_model(kind, repo, device)
                 for r in segs:
                     key = f"pred_text_{name}"
+                    norm_key = f"norm_text_{name}"
+                    transcription = ""
                     if r.get(key):
                         continue
                     try:
-                        r[key] = transcribe(model, kind, r["segment_path"])
+                        transcription = transcribe(model, kind, r["segment_path"])
+                        r[key] = transcription
+                    #    r[norm_key] = clean_text(transcription, lang, False, False)
                     except Exception as err:  # noqa: BLE001
                         logging.warning("%s on %s: %s",
+                                        repo, r["segment_path"], err)
+                        
+                        r[key] = ""
+                    try:
+                        r[norm_key] = clean_text(transcription, lang, False, False)
+                    except Exception as err:  # noqa: BLE001
+                        logging.warning("[norm_script:] %s on %s: %s",
                                         repo, r["segment_path"], err)
                         r[key] = ""
             finally:
