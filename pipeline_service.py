@@ -67,8 +67,8 @@ def process_single_video(url: str, lang: str) -> None:
     run("YouTube ingest", [PY, SCRIPTS_DIR / "youtube_ingest.py", url])
 
     run("Normalise TSV",
-        [PY, SCRIPTS_DIR / "normalize_tsv.py", raw_tsv, lang, ". "])
-    raw_tsv.unlink(missing_ok=True)
+        [PY, SCRIPTS_DIR / "normalize_tsv_v2.py", raw_tsv, lang, "|"])
+#    raw_tsv.unlink(missing_ok=True)
 
     run("Ingest single",
         [PY, SCRIPTS_DIR / "ingest_single.py", f"--session-id={vid}"])
