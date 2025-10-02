@@ -75,7 +75,7 @@ def expand_text(input_text, abreviations, roman_nums, letters, onset, coda):
         
         op=""
         cl=""
-        while t[0] in opening_chars: # punctuation token cleaning
+        while t[0] in opening_chars and len(t)>1: # punctuation token cleaning
             op=op + t[0]
             t=t[1:]
         while t[-1] in closing_chars and len(t)>1:
