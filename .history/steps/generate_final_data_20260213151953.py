@@ -3,7 +3,7 @@
 generate_final_data.py
 ======================
 
-Forced alignment + ASR enrichment for **one** audio-transcript pair
+Forced alignment + ASR enrichment for **one** YouTube video session.
 
 • Segments are language-detected first.
 • For each language we load *one* model at a time → transcribe → unload.
@@ -49,11 +49,11 @@ logging.basicConfig(
 
 # CLI
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser("Generate word-level aligned JSON (one input-id)")
-    p.add_argument("--input-id", required=True,
+    p = argparse.ArgumentParser("Generate word-level aligned JSON (one video)")
+    p.add_argument("--session", required=True,
                    help="YouTube video-id to process")
     p.add_argument("--output", metavar="NAME.json",
-                   help="Custom JSON name (default: final_output_<input-id>.json)")
+                   help="Custom JSON name (default: final_output_<session>.json)")
     p.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto",
                    help="Run ASR on cuda / cpu (default auto)")
     return p.parse_args()
@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
 
 ARGS = parse_args()
 if not ARGS.output:
-    ARGS.output = f"final_output_{ARGS.input_id}.json"
+    ARGS.output = f"final_output_{ARGS.session}.json"
 
 # model catalogue
 MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
@@ -85,7 +85,7 @@ MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
     ),
 }
 
-LEGACY_KEYS = {"pred_text", "cer_score"}
+LEGACY_KEYS = {"pred_text", "pred_text_lm", "cer_score", "cer_score_lm"}
 
 # helper functions
 def _clean_singleton_json_array(txt: str) -> str:
@@ -226,10 +226,10 @@ def clean_text(text: str, label: str) -> str:
 
 
 def build_manifest(meta_path: Path, lid_model) -> Path:
-    """Return a NeMo manifest."""
-    input_id = meta_path.stem.replace("_metadata", "")
+    """Return a NeMo manifest covering the whole video."""
+    session_id = meta_path.stem.replace("_metadata", "")
     mdir = Path("inputs/manifest"); mdir.mkdir(parents=True, exist_ok=True)
-    manifest_fp = mdir / f"{input_id}_manifest.json"
+    manifest_fp = mdir / f"{session_id}_manifest.json"
 
     entries: List[Dict[str, str | float]] = []
     blocks = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -239,42 +239,29 @@ def build_manifest(meta_path: Path, lid_model) -> Path:
             continue
         if hhmmss_to_sec(blk["start"]) >= hhmmss_to_sec(blk["end"]):
             continue
-        
-        if isinstance(blk["normalized_text"], str):
-            src_norm = blk["normalized_text"]
-        else:  # list of (span, token)
-            src_norm = " ".join(w for _sp, w in blk["normalized_text"])
-        if not src_norm.strip():
-            continue
-        
-        if isinstance(blk["original_text"], str):
-            src_org = blk["original_text"]
-        else:  # list of (span, token)
-            src_org = " ".join(w for _sp, w in blk["original_text"])
-        if not src_org.strip():
-            continue
-                
 
-        lang, conf = choose_language(src_norm, lid_model)
-        cleaned_normalized = clean_text(src_norm, f"__label__{lang}")
+        tokens = [w for _sp, w in blk["text"]]
+        if not tokens:
+            continue
+        src = " ".join(tokens)
+        lang, conf = choose_language(src, lid_model)
+        cleaned = clean_text(src, f"__label__{lang}")
 
         entries.append({
             "audio_filepath": str(wav.resolve()),
-            "text": cleaned_normalized,
-            "original_text": src_org,
+            "text": cleaned,
+            "speaker": "unknown",
             "language": f"{lang}__{conf:.2f}",
         })
 
     if not entries:
-        raise RuntimeError(f"No valid blocks in {input_id}")
+        raise RuntimeError(f"No valid blocks in {session_id}")
 
     with manifest_fp.open("w", encoding="utf-8") as f:
         for e in entries:
             json.dump(e, f, ensure_ascii=False)
             f.write("\n")
     return manifest_fp
-
-
 
 
 # main
@@ -289,6 +276,10 @@ def main() -> None:
     es_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(
         "stt_es_conformer_ctc_large")
 
+    decoder = build_ctcdecoder(
+        ca_asr.decoder.vocabulary,
+        alpha=0.5, beta=1.0)
+
     device = (
         "cpu" if ARGS.device == "cpu" else
         "cuda" if (ARGS.device == "cuda" or
@@ -297,24 +288,24 @@ def main() -> None:
     )
 
     # Paths
-    input_id = ARGS.input_id
-    norm_root = Path("inputs/normalized") / input_id
-    meta_path = norm_root / f"{input_id}_metadata.json"
+    session_id = ARGS.session
+    seg_root = Path("inputs/segments") / session_id
+    meta_path = seg_root / f"{session_id}_metadata.json"
     if not meta_path.is_file():
         sys.exit(f"❌  metadata not found: {meta_path}")
 
     # 1 ── Forced alignment
     manifest_fp = build_manifest(meta_path, lid_model)
     align_root = Path("inputs/wordlevel_alignment")
-    input_align_dir = align_root / input_id
-    input_align_dir.mkdir(parents=True, exist_ok=True)
+    sess_align_dir = align_root / session_id
+    sess_align_dir.mkdir(parents=True, exist_ok=True)
 
     subprocess.run([
         sys.executable,
         "NeMo/tools/nemo_forced_aligner/align.py",
         "pretrained_name=stt_ca_conformer_ctc_large",
         f"manifest_filepath={manifest_fp}",
-        f"output_dir={input_align_dir}",
+        f"output_dir={sess_align_dir}",
         "align_using_pred_text=false",
         "transcribe_device=cpu",
         "viterbi_device=cpu",
@@ -323,28 +314,28 @@ def main() -> None:
     ], check=True)
 
     # 2 ── Segment & language-tag
-    out_seg_dir = Path("inputs/output_segment") / input_id
+    out_seg_dir = Path("inputs/output_segment") / session_id
     out_seg_dir.mkdir(parents=True, exist_ok=True)
 
     buckets: Dict[str, List[Dict[str, Any]]] = {"ca": [], "es": []}
     combined: Dict[str, Any] = {}
 
-    ctm_dir = input_align_dir / "ctm" / "segments"
+    ctm_dir = sess_align_dir / "ctm" / "segments"
     for ctm_file in ctm_dir.rglob("*.ctm"):
         block_id = ctm_file.stem
-        wav_src = norm_root / f"{block_id}.wav"
+        wav_src = seg_root / f"{block_id}.wav"
         if not wav_src.is_file():
             continue
 
         seg = Segmenter(str(ctm_file), str(wav_src), str(out_seg_dir),
-                        lid_model, ca_asr, es_asr)
+                        lid_model, ca_asr, es_asr, decoder)
         results = seg.segment_audio()
 
         for r in results:
             for k in LEGACY_KEYS:
                 r.pop(k, None)
 
-            lang, conf = choose_language(r["normalized_text"], lid_model)
+            lang, conf = choose_language(r["org_text"], lid_model)
             if lang not in ("ca", "es"):
                 continue
             r["language"] = lang
@@ -352,13 +343,12 @@ def main() -> None:
             buckets[lang].append(r)
 
         combined[block_id] = {
-            "input_id": input_id,
+            "video_id": session_id,
             "results": results,
         }
-          
+
     # 3 ── ASR per-language, one model at a time
     for lang, segs in buckets.items():
-        print(f"\nProcessing language: {lang}, number of segments: {len(segs)}")
         if not segs:
             continue
         for name, kind, repo in MODELS_BY_LANG[lang]:
@@ -366,7 +356,6 @@ def main() -> None:
             try:
                 logging.info("loading %s", repo)
                 model = load_model(kind, repo, device)
-                print(f"Model {name} loaded on device {device}")
                 for r in segs:
                     key = f"pred_text_{name}"
                     if r.get(key):
@@ -381,7 +370,7 @@ def main() -> None:
                 unload_model(model)
 
     # 4 ── write JSON
-    final_fp = Path("inputs/output_segment") / ARGS.output
+    final_fp = Path("inputs/wordlevel_alignment") / ARGS.output
     final_fp.write_text(json.dumps(combined, indent=2, ensure_ascii=False))
     print(f"✓  JSON written to {final_fp}  ({time.perf_counter()-start:.1f}s)")
 
