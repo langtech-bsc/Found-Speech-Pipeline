@@ -114,7 +114,7 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
             if seg.get("language") not in keep_langs:
                 continue
 
-            ref = seg["org_text"]
+            ref = seg["normalized_text"]
             hyps_raw = [seg[f] for f in pred_fields]
 
             ref_norm = normalise(ref) if args.norm else ref
@@ -133,8 +133,8 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
 
             if args.csv:
                 rows.append({
-                    "video_id": seg.get("video_id", ""),     # ← NEW
-                    "ref": ref,
+                    "segment_path":seg["segment_path"],
+                    "normalized_text": ref,
                     **dict(zip(pred_fields, hyps)),
                     "rover_text": vote_out,
                 })
