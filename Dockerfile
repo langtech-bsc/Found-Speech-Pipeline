@@ -4,7 +4,7 @@ FROM python:3.11-slim
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git wget curl gnupg ca-certificates lsb-release \
-        ffmpeg sudo
+        ffmpeg sudo unzip
 
 # Apertium nightly repo + language packages
 RUN wget -qO- https://apertium.projectjj.com/apt/install-nightly.sh | bash && \
@@ -19,10 +19,23 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 RUN pip install --upgrade pip setuptools wheel \
  && pip install "Cython>=0.29" \
+ && pip install --no-build-isolation youtokentome==1.0.6 \
  && PIP_NO_BUILD_ISOLATION=1 pip install -r requirements.txt
 
-# Runtime directories
-RUN mkdir -p ingestion merged
+# Ensure setuptools provides pkg_resources (required by lightning_utilities → NeMo).
+# Pin to <70: setuptools 70+ changed pkg_resources and breaks lightning_utilities.
+RUN pip install "setuptools>=65,<70"
+
+# Runtime directories and language-ID model (required by generate_final_data.py)
+RUN mkdir -p ingestion merged utils/models
+# Download lid.176.bin from B2Drop (same source as README). If the share is a zip, extract the model.
+RUN curl -sL "https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN/download" -o /tmp/lid_dl \
+    && (file /tmp/lid_dl | grep -qi "zip" \
+        && unzip -j -o /tmp/lid_dl '*lid.176.bin' -d utils/models \
+        || cp /tmp/lid_dl utils/models/lid.176.bin) \
+    && rm -f /tmp/lid_dl \
+    && test -s utils/models/lid.176.bin && test "$(stat -c%s utils/models/lid.176.bin)" -gt 1000000 \
+    || (echo "ERROR: lid.176.bin download failed or too small; mount it at run with -v /path/to/models:/app/utils/models" && exit 1)
 ENV SUDO_PWD="your_sudo_password"
 
 CMD ["python", "pipeline_service.py", "https://www.youtube.com/watch?v=-f2OsxyRLlQ"]
