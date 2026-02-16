@@ -48,6 +48,29 @@ Everything is now in place.  Test with the **Quick‑start** below.
 
 ---
 
+## Docker
+
+Build and run with Docker (≥24 GB RAM for the container). The image **downloads** `lid.176.bin` during build from the same B2Drop link as in [Installation](#installation-nativewsl); if that link requires a browser or fails, mount the model at run (see below).
+
+```bash
+# 1 – build image (includes downloading lid.176.bin)
+docker build -t fsp-pipeline -f Dockerfile .
+
+# 2 – run (example: single video)
+docker run --rm fsp-pipeline python pipeline_service.py --video "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Or channel + max
+docker run --rm fsp-pipeline python pipeline_service.py --channel "https://www.youtube.com/@InteriorCatalunya/videos" --max 2
+```
+
+If the in-build download didn’t work, mount the model and optional output dir:
+
+```bash
+docker run --rm -v /path/to/models:/app/utils/models -v $(pwd)/out:/app/merged fsp-pipeline python pipeline_service.py --video "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+---
+
 ## Quick‑start
 
 Download, process and merge the two most recent videos of the Interior Catalunya channel:
