@@ -2,12 +2,13 @@
 import json
 import os
 import sys
+import argparse
 
-def filter_and_cleanup(json_path):
+def filter_and_cleanup(json_path, min_dur=2, max_dur=30):
     """
     - Loads the JSON at json_path.
     - For each segment in each top‐level entry, computes duration = end - start.
-    - If not (duration > 2 and duration <= 30):
+    - If not (duration > min_dur and duration <= max_dur):
         • Deletes the file at segment_path (if it exists).
         • Omits that segment from the filtered JSON.
     - Overwrites the original JSON with the filtered version.
@@ -34,8 +35,8 @@ def filter_and_cleanup(json_path):
 
             duration = end - start
 
-            # Remove segments that do NOT satisfy 2 < duration <= 30
-            if not (duration > 2 and duration <= 30):
+            # Remove segments that do NOT satisfy min < duration <= max
+            if not (duration > min_dur and duration <= max_dur):
                 if seg_path and os.path.isfile(seg_path):
                     try:
                         os.remove(seg_path)
@@ -56,14 +57,18 @@ def filter_and_cleanup(json_path):
 
     print(f"Filtering complete. Updated JSON written to: {json_path}")
 
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python3 duration_filter.py /path/to/final_output.json")
+    parser = argparse.ArgumentParser(
+        description="Filter segments in a JSON file by duration and optionally delete files outside the range."
+    )
+    parser.add_argument("json_file", help="Path to the JSON file to filter")
+    parser.add_argument("--min", type=float, default=2, help="Minimum duration (default: 2)")
+    parser.add_argument("--max", type=float, default=30, help="Maximum duration (default: 30)")
+    args = parser.parse_args()
+
+    if not os.path.isfile(args.json_file):
+        print(f"Error: file not found: {args.json_file}")
         sys.exit(1)
 
-    json_file = sys.argv[1]
-    if not os.path.isfile(json_file):
-        print(f"Error: file not found: {json_file}")
-        sys.exit(1)
-
-    filter_and_cleanup(json_file)
+    filter_and_cleanup(args.json_file, min_dur=args.min, max_dur=args.max)
