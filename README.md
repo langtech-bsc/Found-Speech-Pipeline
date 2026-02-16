@@ -2,7 +2,9 @@
 
 ## Introduction
 
-This repository brings together every script required to take a **public YouTube recording** and turn it into a clean, word‑level aligned JSON file plus optional CER/WER statistics.  The design goal is **zero external services**: everything runs locally in a Python virtual‑environment on Linux or on **Windows Subsystem for Linux (WSL)**.
+The **Found‑Speech Pipeline** processes **audio-transcript pairs** (WAV + TSV) into clean, word‑level aligned JSON files with optional CER/WER analytics.  The design goal is **zero external services**: everything runs locally in a Python virtual‑environment on Linux or on **Windows Subsystem for Linux (WSL)**.
+
+
 
 ---
 
@@ -44,7 +46,35 @@ PIP_NO_BUILD_ISOLATION=1 pip install -r requirements.txt
 mkdir ingestion merged
 ```
 
-Everything is now in place.  Test with the **Quick‑start** below.
+Everything is now in place. 
+
+---
+
+## Input Format
+
+Place matching `.wav` and `.tsv` files inside the `ingestion/` directory.
+
+Example:
+
+```
+ingestion/
+  input-id_01.wav
+  input-id_01.tsv
+  input-id_02.wav
+  input-id_02.tsv
+```
+
+Each `.tsv` must contain **exactly one line** in this format:
+
+```
+/absolute/path/to/input-id.wav<TAB>Full transcript text
+```
+
+Requirements:
+
+* WAV filename and TSV filename must share the same stem.
+* The WAV path inside the TSV must be absolute.
+* The TSV must contain a single row.
 
 ---
 
@@ -56,39 +86,56 @@ Build and run with Docker (≥24 GB RAM for the container). The image **downlo
 # 1 – build image (includes downloading lid.176.bin)
 docker build -t fsp-pipeline -f Dockerfile .
 
-# 2 – run (example: single video)
-docker run --rm fsp-pipeline python pipeline_service.py --video "https://www.youtube.com/watch?v=VIDEO_ID"
-
-# Or channel + max
-docker run --rm fsp-pipeline python pipeline_service.py --channel "https://www.youtube.com/@InteriorCatalunya/videos" --max 2
+# 2 – run (example: single input-id)
+docker run --rm fsp-pipeline python pipeline_service.py --input-id input-id_01 --lang ca
 ```
 
 If the in-build download didn’t work, mount the model and optional output dir:
 
 ```bash
-docker run --rm -v /path/to/models:/app/utils/models -v $(pwd)/out:/app/merged fsp-pipeline python pipeline_service.py --video "https://www.youtube.com/watch?v=VIDEO_ID"
+docker run --rm -v /path/to/models:/app/utils/models -v $(pwd)/out:/app/merged fsp-pipeline python pipeline_service.py --input-id input-id_01 --lang ca
 ```
 
 ---
 
-## Quick‑start
+## Running the Pipeline
 
-Download, process and merge the two most recent videos of the Interior Catalunya channel:
+### Process a Single Session
 
 ```bash
-python pipeline_service.py \
-    --channel "https://www.youtube.com/@InteriorCatalunya/videos" \
-    --max 2
+python pipeline_service.py --input-id input-id_01 --lang [ca,es]
 ```
 
-Outputs will appear in
+### Batch Mode (Process All Valid Pairs)
 
-* `inputs/wordlevel_alignment/final_output_<video‑id>.json`
-* `merged/final_output_<video‑id>.json` (+ .csv, .png if requested)
+```bash
+python pipeline_service.py --lang [ca,es]
+```
+
+Batch mode automatically:
+
+* Scans `ingestion/`
+* Detects valid `.wav + .tsv` pairs
+* Processes them sequentially
+* Skips incomplete pairs
 
 ---
 
-## Script reference
+## Output Files
+
+Final outputs appear in:
+
+```
+merged/
+  final_output_<input-id>.json
+  final_output_<input-id>.csv   
+  final_output_<input-id>.png  
+
+```
+
+---
+
+## Script Reference
 
 Below is a **complete list of CLI entry‑points**.  Run any file with `-h/--help` for the authoritative parser.
 
@@ -96,29 +143,21 @@ Below is a **complete list of CLI entry‑points**.  Run any file with `-h/--hel
 
 High‑level orchestrator – call this **in almost all cases**.
 
-| Argument    | Type & default              | Description                                    |
-| ----------- | --------------------------- | ---------------------------------------------- |
-| `--video`   | str                         | Single YouTube URL or ID.                      |
-| `--channel` | str                         | Channel/playlist URL; processes newest videos. |
-| `--lang`    | `ca` \| `es` (default `ca`) | Language used by `normalize_tsv.py`.           |
-| `--max`     | int                         | Limit when using `--channel`.                  |
+| Argument     | Description                                          |
+| ------------ | ---------------------------------------------------- |
+| `--input-id` | Process a single audio-transcript pair (optional).   |
+| `--lang`     | `ca` or `es` (default: `ca`).                        |
+
+Modes:
+
+* If `--input-id` is provided → single mode
+* If omitted → batch mode
 
 Internally it calls the remaining scripts in the order shown below.
 
 ---
 
-### 2. `scripts/youtube_ingest.py`
-
-| Argument                 | Description                                                             |
-| ------------------------ | ----------------------------------------------------------------------- |
-| `youtube_url`            | Full YouTube link or bare ID.                                           |
-| `--reject-license`, `-R` | Comma‑separated list (`youtube`, `creativeCommon`) to prevent download. |
-
-*Checks the licence → downloads audio as WAV → grabs official captions or falls back to Whisper large.  Produces `<video‑id>.wav` and `<video‑id>.tsv` inside `ingestion/`.  Exits gracefully if the licence is blocked.*
-
----
-
-### 3. `scripts/normalize_tsv.py`
+### 2. `scripts/normalize_tsv.py`
 
 | Positional          | Description                                                                      |
 | ------------------- | -------------------------------------------------------------------------------- |
@@ -126,75 +165,90 @@ Internally it calls the remaining scripts in the order shown below.
 | `lang`              | `ca` or `es` – language‐specific normalisation rules.                            |
 | `mark` *(optional)* | If provided, deduplicates sentences containing this marker before normalisation. |
 
-Writes `<input>_norm.tsv` (or `_norm_mark.tsv`) next to the source file.
+Writes `<input-id>_norm_mark.tsv` (or `_norm.tsv)`  in `normalized/<input-id>`.
 
 ---
 
-### 4. `scripts/ingest_single.py`
+### 3. `scripts/normalize_audio.py`
 
-| Option                      | Description                               |
-| --------------------------- | ----------------------------------------- |
-| `--session-id` *(required)* | YouTube video‑id – used for folder names. |
-| `--speaker`                 | Speaker label embedded in metadata JSON.  |
+| Option                    | Description              |
+| ------------------------- | ------------------------ |
+| `--input-id` (required)   | WAV + TSV filename stem  |
 
-Transcodes the newest WAV in `ingestion/` to the canonical 16 kHz mono format and produces
+Transcodes the WAV in `ingestion/` to the canonical 16 kHz mono format and produces:
 
-* `inputs/segments/<session>/…wav`
-* `inputs/segments/<session>/<session>_metadata.json`
-* `inputs/manifest/<session>_manifest.json`
+* `inputs/normalized/<input-id>/<input-id>.wav`
+* `inputs/normalized/<input-id>/<input-id>_metadata.json`
 
 ---
 
-### 5. `steps/generate_final_data.py`
+### 4. `steps/generate_final_data.py`
 
-| Option      | Default                       | Description                                                                               |
-| ----------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
-| `--session` | *(required)*                  | Video‑id to process.                                                                      |
-| `--output`  | `final_output_<session>.json` | Custom JSON file name.                                                                    |
-| `--device`  | `auto`                        | `cuda`, `cpu` or auto‑detect.  Only affects the ASR stage; forced alignment stays on CPU. |
+| Option                            | Description                             |
+| --------------------------------- | --------------------------------------- |
+| `--input-id` (required)           | WAV + TSV filename stem                 |
+| `--output`                        | Custom JSON filename.                   |
+| `--device`   (Default: `auto`)    | `cuda`, `cpu`, or `auto`. (Only affects the ASR stage; forced alignment stays on CPU. )                                                                        |
 
-Stages: forced alignment → language detection & segmentation → per‑language ASR loop → final JSON.
+Stages:
+
+1. NeMo Manifest generation, producing:
+* `inputs/manifest/<input-id>_manifest.json`
+
+2. Neural Forced alignment, producing:
+* `inputs/wordlevel_alignment/<input-id>/ass/*`
+* `inputs/wordlevel_alignment/<input-id>/ctm/*`
+* `inputs/wordlevel_alignment/<input-id>/PKuuatqwz00_manifest_with_output_file_paths.json`
+
+2. Language detection & segmentation , producing:
+*  `inputs/output_segment/<input-id>/<input-id>_start_end.wav`
+
+3. Per-language ASR
+
+4. Final JSON generation, producing:
+*  `inputs/output_segment/final_output_<input-id>.json`
 
 ---
 
-### 6. `scripts/duration_filter.py`
+### 5. `scripts/duration_filter.py`
 
-| Positional  | Description                      |
+| Argument    | Description                      |
 | ----------- | -------------------------------- |
-| `json_path` | Path to a `final_output_*.json`. |
+| `json_path` | Path to a `final_output_<input-id>.json`. |
 
-Removes segment files *and* JSON entries whose duration is **≤ 2 s or > 30 s**.
+Removes segment files *and* JSON entries whose duration is less than minimum duration and higher than maximum durations (Default: **≤ 2 s or > 30 s**).
 
----
-
-### 7. `scripts/rover_merge.py`
-
-| Option            | Description                                                         |
-| ----------------- | ------------------------------------------------------------------- |
-| `input_glob`      | Single JSON file or quoted glob pattern.                            |
-| `-o`, `--out-dir` | Destination folder (default `../merged`).                           |
-| `--fields`        | Space‑separated list of `pred_*` keys to merge.  Default: all.      |
-| `--langs`         | Languages to keep (`ca es`).                                        |
-| `--norm`          | Lower‑case + strip punctuation prior to scoring.                    |
-| `--strategy`      | `centroid` (Levenshtein barycentre) or `vote` (per‑token majority). |
-| `--csv`           | Emit a per‑segment CSV alongside the merged JSON.                   |
-| `--plot`          | Save a corpus‑level CER bar chart (.png).                           |
-
-Outputs a merged JSON **with a new `rover_text` field per segment** plus optional analytics.
 
 ---
 
-## Input/Output directories overview
+### 6. `scripts/rover_merge.py`
+
+| Option           | Description                                    |
+| ---------------- | ---------------------------------------------- |
+| `input_glob`     | Single JSON file or quoted glob pattern.       |
+| `-o`, `--out-dir`| Destination folder (default: `../merged`)      |
+| `--fields`       | Space-separated `pred_*` fields to merge       |
+| `--langs`        | Languages to keep (`ca es`)                    |
+| `--norm`         | Lower-case + strip punctuation before scoring  |
+| `--strategy`     | `centroid` or `vote`.                          |
+| `--csv`          | Emit per-segment CSV alongside the merged JSON |
+| `--plot`         | Save corpus-level CER bar chart (`.png`)       |
+
+Outputs a merged JSON **with a new `rover_text` field per segment** plus analytics.
+
+---
+
+## Directory Structure
 
 ```
 .
-├─ ingestion/                 # transient audio + TSV inputs
+├─ ingestion/                 # Input WAV + TSV pairs
 ├─ inputs/
-│  ├─ manifest/              # NeMo manifests
-│  ├─ segments/              # canonicalised WAV + meta per video
-│  ├─ output_segment/        # short sentence‑level clips
-│  └─ wordlevel_alignment/   # final JSON & CTM files
-├─ merged/                    # ROVER outputs
+│  ├─ manifest/               # NeMo manifests
+│  ├─ normalized/              # Canonical WAV + Normalized TSV + metadata per input-id
+│  ├─ output_segment/         # Sentence-level clips + Final JSON
+│  └─ wordlevel_alignment/    # ASS + CTM files
+├─ merged/                    # ROVER outputs (.csv, .json, .png)
 └─ utils/models/              # lid.176.bin
 ```
 
@@ -202,6 +256,32 @@ Outputs a merged JSON **with a new `rover_text` field per segment** plus optiona
 
 ## Troubleshooting
 
-* **"ffmpeg: command not found"** – install `ffmpeg` via `apt‑get install ffmpeg`.
-* **CUDA out‑of‑memory** – run with `--device cpu` on `generate_final_data.py` or set `CUDA_VISIBLE_DEVICES=` in the environment.
+**"ffmpeg: command not found"**
+
+```
+sudo apt install ffmpeg
+```
+
+**CUDA out-of-memory**
+
+Run on CPU:
+
+```
+CUDA_VISIBLE_DEVICES= python pipeline_service.py --lang ca
+```
+
+Or pass `--device cpu` to `generate_final_data.py`.
+
 ---
+
+## Notes
+
+* Forced alignment always runs on CPU.
+* Batch mode continues even if a input-id fails (incomplete WAV/TSV or processing error).
+* Ensure sufficient RAM before processing long recordings.
+
+---
+
+## License
+
+Refer to the repository license file for usage terms.
