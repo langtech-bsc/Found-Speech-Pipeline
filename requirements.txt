@@ -277,4 +277,4 @@ ovos_number_parser
 sentence_splitter
 num2words>=0.5
 
--e git+https://github.com/NVIDIA/NeMo.git@r1.23.0#egg=nemo_toolkit[asr]
+nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@r1.23.0

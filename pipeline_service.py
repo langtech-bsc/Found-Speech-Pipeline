@@ -83,7 +83,7 @@ def process_existing_paired_input(input_id: str, lang: str) -> None:
     run("Generate final data",
         ["env", "CUDA_VISIBLE_DEVICES=", PY,
          STEPS_DIR / "generate_final_data.py",
-         f"--input-id={input_id}", "--output", out_json_name])
+         f"--input-id={input_id}", f"--lang={lang}", "--output", out_json_name])
     
 
     # 4️⃣ Duration filter
