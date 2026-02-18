@@ -52,6 +52,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser("Generate word-level aligned JSON (one input-id)")
     p.add_argument("--input-id", required=True,
                    help="YouTube video-id to process")
+    p.add_argument("--lang", choices=("ca", "es"), default="ca",
+                   help="Primary language (only its CTC model is loaded)")
     p.add_argument("--output", metavar="NAME.json",
                    help="Custom JSON name (default: final_output_<input-id>.json)")
     p.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto",
@@ -284,10 +286,23 @@ def main() -> None:
     # Static resources
     lid_model = fasttext.load_model("utils/models/lid.176.bin")
 
-    ca_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(
-        "stt_ca_conformer_ctc_large")
-    es_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(
-        "stt_es_conformer_ctc_large")
+    # Only load the CTC model for the requested language
+    CTC_MODELS = {
+        "ca": "stt_ca_conformer_ctc_large",
+        "es": "stt_es_conformer_ctc_large",
+    }
+    primary_model_name = CTC_MODELS[ARGS.lang]
+
+    # Check for pre-downloaded local model first
+    local_nemo = Path("utils/models/nemo") / f"{primary_model_name}.nemo"
+    if local_nemo.is_file():
+        print(f"Loading local NeMo model: {local_nemo}")
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
+    else:
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(primary_model_name)
+
+    ca_asr = primary_asr if ARGS.lang == "ca" else None
+    es_asr = primary_asr if ARGS.lang == "es" else None
 
     device = (
         "cpu" if ARGS.device == "cpu" else
@@ -309,10 +324,16 @@ def main() -> None:
     input_align_dir = align_root / input_id
     input_align_dir.mkdir(parents=True, exist_ok=True)
 
+    # Use local model path for the aligner if available
+    if local_nemo.is_file():
+        aligner_model_arg = f"model_path={local_nemo}"
+    else:
+        aligner_model_arg = f"pretrained_name={primary_model_name}"
+
     subprocess.run([
         sys.executable,
         "NeMo/tools/nemo_forced_aligner/align.py",
-        "pretrained_name=stt_ca_conformer_ctc_large",
+        aligner_model_arg,
         f"manifest_filepath={manifest_fp}",
         f"output_dir={input_align_dir}",
         "align_using_pred_text=false",
@@ -377,6 +398,10 @@ def main() -> None:
                         logging.warning("%s on %s: %s",
                                         repo, r["segment_path"], err)
                         r[key] = ""
+            except Exception as err:  # noqa: BLE001
+                logging.warning("Could not load model %s (%s): %s — skipping",
+                                name, repo, err)
+                print(f"⚠  Skipping model {name}: {err}")
             finally:
                 unload_model(model)
 

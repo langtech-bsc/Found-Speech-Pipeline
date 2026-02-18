@@ -57,10 +57,12 @@ class Segmenter:
 
             lang_label = self._identify_language(normalized_text)
             if lang_label == "__label__ca":
-                pred_text = self._asr(self.ca_model, wav_path)
+                model = self.ca_model or self.es_model
+                pred_text = self._asr(model, wav_path)
                 language = "ca"
             else:
-                pred_text = self._asr(self.es_model, wav_path)
+                model = self.es_model or self.ca_model
+                pred_text = self._asr(model, wav_path)
                 language = "es"
 
             result = {
