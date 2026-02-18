@@ -1,0 +1,27 @@
+# Runtime / generated data
+venv/
+model_cache/
+inputs/
+merged/
+ingestion/*.wav
+ingestion/*.tsv
+
+# Pre-downloaded models (mounted at runtime, NOT baked into the image)
+utils/models/nemo/
+utils/models/huggingface/
+
+# Git metadata
+.git/
+.gitignore
+
+# IDE / OS junk
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Singularity / Apptainer
+*.sif
+.apptainer_tmp/
