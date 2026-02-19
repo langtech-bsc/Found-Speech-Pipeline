@@ -234,7 +234,7 @@ def build_manifest(meta_path: Path, lid_model) -> Path:
                 
 
         lang, conf = choose_language(src_norm, lid_model)
-        cleaned_normalized = clean_text(src_norm, f"__label__{lang}")
+        cleaned_normalized = clean_text(src_norm, lang, False, False)
 
         entries.append({
             "audio_filepath": str(wav.resolve()),

@@ -40,3 +40,4 @@ untracked_backups/
 .dockerignore
 build_singularity.sh
 run_singularity.sh
+utils/models/

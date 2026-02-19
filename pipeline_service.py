@@ -88,7 +88,7 @@ def process_existing_paired_input(input_id: str, lang: str) -> None:
 
     # 4️⃣ Duration filter
     run("Duration filter",
-        [PY, SCRIPTS_DIR / "duration_filter.py", out_json_path])
+        [PY, SCRIPTS_DIR / "duration_filter.py", out_json_path, "--max", "60"])
 
     # 5️⃣ ROVER merge
     run("ROVER merge",
