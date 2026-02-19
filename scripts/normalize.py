@@ -94,6 +94,11 @@ def expand_text(input_text, conditionated, abreviations, keep_initials, roman_nu
         output_text = " ".join(tokens)
     return output_text.replace("' ", "'").replace(" - ", "-")
 
+def finalize_text(text, accepted_chars):
+    return re.sub(r'\s+', ' ',
+                  ''.join(ch if ch.lower() in accepted_chars else ' ' for ch in text)
+                 ).strip()
+
 def clean_text(input_text, lang):
     if lang == "ca":
         from norm_dicts_ca import ordinals, currency, phisics_and_maths, greek_letters, letters
@@ -103,8 +108,21 @@ def clean_text(input_text, lang):
         from norm_dicts_es import ordinals, currency, phisics_and_maths, greek_letters, letters
         from norm_dicts_es import abr_dict, keep_initials, roman_nums, follow_proper_name, acronyms_dict, accepted_chars, dots_and_commas
         from norm_dicts_es import lang_cleaning_text
+    elif lang == "eu":
+        # Basque: use external normalizer binary
+        from norm_eu import normalize_eu
+        # Use accepted chars from catalan
+        from norm_dicts_ca import accepted_chars
+        return finalize_text(normalize_eu(input_text), accepted_chars)
+    elif lang == "gl":
+        # Galician: use Cotovia TTS preprocessor
+        from norm_gl import normalize_gl
+        # Use accepted chars from catalan
+        from norm_dicts_ca import accepted_chars 
+        return finalize_text(normalize_gl(input_text), accepted_chars)
     else:
         print("sorry, language not supported")
+        return input_text.lower()
 
     special_chars = greek_letters | phisics_and_maths | currency
     abreviations = abr_dict | acronyms_dict
@@ -129,7 +147,11 @@ def create_filename(input_file, add):
     return "_".join([".".join(parts[:-1]), add]) + ".tsv"
 
 def split_and_clean(input_text, mark, lang):
-    splitter = SentenceSplitter(language=lang)
+    try:
+        splitter = SentenceSplitter(language=lang)
+    except Exception:
+        # Fallback to Spanish for unsupported languages like eu/gl
+        splitter = SentenceSplitter(language="es")
     sents = splitter.split(input_text)
     return mark.join([clean_text(sent, lang) for sent in sents])    
 
@@ -162,7 +184,7 @@ def main(argv=None):
             print(clean_text(sentence, lang)+mark)
             print("")
     elif tsv_file:
-        df = pd.read_csv("example.tsv.csv", sep="\t", names=["path", "text"])
+        df = pd.read_csv(tsv_file, sep="\t", names=["path", "text"])
         if mark != "":
             df["norm_mark_text"]=df.apply(lambda x: split_and_clean(x.text, mark, lang), axis=1)
             add = "norm_mark"
@@ -175,4 +197,5 @@ def main(argv=None):
 
 
 
-main()
+if __name__ == "__main__":
+    main()

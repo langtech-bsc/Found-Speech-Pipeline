@@ -103,6 +103,10 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
     any_seg = next(iter(data.values()))["results"][0]
     pred_fields = args.fields or sorted(collect_pred_fields(any_seg))
     print(f"[{path.name}]  merging over ➜ {pred_fields}")
+    
+    if not pred_fields:
+        print(f"No pred_* fields found in {path.name}; skipping merge.\n")
+        return 0.0, 0.0, 0.0
 
     rows: List[Dict] = []
     tot_chars = err_ro_c = err_ro_w = 0.0
@@ -119,10 +123,23 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
 
             ref_norm = normalise(ref) if args.norm else ref
             hyps = [clean_pred(h) for h in hyps_raw]
+
+            # Drop empty hypotheses early
+            hyps = [h for h in hyps if isinstance(h, str) and h.strip()]
+            if not hyps:
+                # Nothing to merge for this segment; skip safely
+                continue
+
             hyps_norm = [normalise(h) for h in hyps] if args.norm else hyps
 
-            vote_out = (majority_vote([h.split() for h in hyps_norm])
-                        if args.strategy == "vote" else centroid(hyps_norm))
+            if not hyps_norm: continue
+
+            vote_out = (
+                majority_vote([h.split() for h in hyps_norm])
+                if args.strategy == "vote"
+                else centroid(hyps_norm)
+            )
+
             seg["rover_text"] = vote_out
             tot_chars += len(ref_norm)
 

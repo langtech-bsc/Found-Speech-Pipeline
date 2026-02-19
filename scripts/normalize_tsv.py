@@ -19,8 +19,8 @@ def main():
     lang       = sys.argv[2]
     mark       = sys.argv[3] if len(sys.argv) == 4 else ""
 
-    if lang not in ("ca", "es"):
-        die("lang must be 'ca' or 'es'")
+    if lang not in ("ca", "es", "eu", "gl"):
+        die("lang must be 'ca', 'es', 'eu', or 'gl'")
     if not os.path.isfile(input_file):
         die(f"input file '{input_file}' not found")
 
