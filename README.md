@@ -2,183 +2,391 @@
 
 ## Introduction
 
-This repository brings together every script required to take a **public YouTube recording** and turn it into a clean, word‑level aligned JSON file plus optional CER/WER statistics.  The design goal is **zero external services**: everything runs locally in a Python virtual‑environment on Linux or on **Windows Subsystem for Linux (WSL)**.
+The **Found‑Speech Pipeline** processes **audio‑transcript pairs** (WAV + TSV) into clean, word‑level aligned JSON files with CER/WER analytics via ROVER merging of multiple ASR hypotheses. Everything runs locally — no external services required.
+
+Supported languages: **Catalan** (`ca`) and **Spanish** (`es`).
 
 ---
 
-## Hardware & OS prerequisites
+## Hardware & OS Prerequisites
 
-| Requirement                        | Why it matters                                                                                                                                                                          |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ≥ 24 GB RAM                        | Whisper‐large‑v3 and forced alignment are memory‑hungry.  Inside WSL open **Windows Terminal → Settings → `wsl.conf`** and set e.g.:<br>`[wsl2]\nmemory=24GB` then run `wsl --shutdown`. |
-| Ubuntu 22.04 LTS (native or WSL 2) | Verified host for NVIDIA NeMo.                                                                                                                                     |
-| FFmpeg on `$PATH`                  | Transcodes audio to 16 kHz mono WAV.                                                                                                                                                    |
-| (Optional) CUDA 11+                | Speeds up Whisper and RNNT by \~4×.                                                                                                                                                     |
+| Requirement | Notes |
+|---|---|
+| ≥ 24 GB RAM (or RAM + swap) | Whisper‑large‑v3 and forced alignment are memory‑hungry |
+| Ubuntu 22.04+ (native, WSL 2, or Docker) | Verified host for NVIDIA NeMo |
+| FFmpeg on `$PATH` | Transcodes audio to 16 kHz mono WAV (included in Docker image) |
+| (Optional) CUDA 11+ | Speeds up Whisper and RNNT by ~4× |
+
+> [!NOTE]
+> **WSL users:** Open **Windows Terminal → Settings → `.wslconfig`** and set `memory=24GB`, then run `wsl --shutdown`.
 
 ---
 
-## Installation (native/WSL)
+## Input Format
 
-0. **Enlarge WSL memory** (see table above) or make sure your Linux box has ≥ 24 GB free.
+Place matching `.wav` and `.tsv` files inside the `ingestion/` directory:
+
+```
+ingestion/
+  my_recording.wav
+  my_recording.tsv
+```
+
+Each `.tsv` must contain **exactly one line** in this format:
+
+```
+/app/ingestion/my_recording.wav<TAB>Full transcript text here.
+```
+
+> [!IMPORTANT]
+> - The WAV filename and TSV filename must share the same stem (e.g. `my_recording`).
+> - **Docker/Singularity:** use the container path `/app/ingestion/<filename>.wav`.
+> - **Native:** use the absolute host path (e.g. `/home/user/Found-Speech-Pipeline/ingestion/my_recording.wav`).
+> - The TSV must contain a single row with two tab‑separated columns: WAV path and transcript text.
+
+---
+
+## Quick Start (Docker — recommended)
+
+### Step 1. Build the Docker image
 
 ```bash
-# 1 – create model folder
-mkdir -p utils/models
+docker build -t fsp-pipeline -f Dockerfile .
+```
 
-# 2 – copy the pre‑trained models into it. Here's the link of the model for download: https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN
-cp /path/to/lid.176.bin utils/models/
+### Step 2. Download models (once, on host)
 
-# 3 – create a Python 3.11 virtual‑env
+All models are stored **outside** the image in `utils/models/` and mounted at runtime.
+This keeps the image lean and lets you run fully offline after downloading.
+
+```bash
+# Create model directories
+mkdir -p utils/models/nemo utils/models/huggingface
+
+# Download the FastText language-ID model (~126 MB)
+wget -q "https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN/download" \
+  -O utils/models/lid.176.bin
+
+# Download all ASR models — Catalan + Spanish (~15 GB)
+docker run --rm --user $(id -u):$(id -g) \
+  -v $(pwd)/utils/models:/app/utils/models \
+  fsp-pipeline python scripts/download_models.py --lang all
+```
+
+To download only one language instead:
+
+```bash
+docker run --rm --user $(id -u):$(id -g) \
+  -v $(pwd)/utils/models:/app/utils/models \
+  fsp-pipeline python scripts/download_models.py --lang es    # Spanish only (~8 GB)
+
+docker run --rm --user $(id -u):$(id -g) \
+  -v $(pwd)/utils/models:/app/utils/models \
+  fsp-pipeline python scripts/download_models.py --lang ca    # Catalan only (~7 GB)
+```
+
+> [!TIP]
+> The `--user $(id -u):$(id -g)` flag ensures files created by Docker are owned by **your user**
+> instead of root, avoiding permission issues with Singularity and on the host.
+
+### Step 3. Run the pipeline
+
+```bash
+# Process a single recording
+docker run --rm --user $(id -u):$(id -g) \
+  -v $(pwd)/ingestion:/app/ingestion \
+  -v $(pwd)/inputs:/app/inputs \
+  -v $(pwd)/merged:/app/merged \
+  -v $(pwd)/utils/models:/app/utils/models \
+  fsp-pipeline python pipeline_service.py --input-id my_recording --lang es
+
+# Batch mode — process all WAV+TSV pairs in ingestion/
+docker run --rm --user $(id -u):$(id -g) \
+  -v $(pwd)/ingestion:/app/ingestion \
+  -v $(pwd)/inputs:/app/inputs \
+  -v $(pwd)/merged:/app/merged \
+  -v $(pwd)/utils/models:/app/utils/models \
+  fsp-pipeline python pipeline_service.py --lang es
+```
+
+### Step 4. Run fully offline (optional)
+
+Once all models are downloaded, you can run with no network access:
+
+```bash
+docker run --rm --network=none --user $(id -u):$(id -g) \
+  -v $(pwd)/ingestion:/app/ingestion \
+  -v $(pwd)/inputs:/app/inputs \
+  -v $(pwd)/merged:/app/merged \
+  -v $(pwd)/utils/models:/app/utils/models \
+  fsp-pipeline python pipeline_service.py --input-id my_recording --lang es
+```
+
+---
+
+## Singularity / Apptainer (for HPC)
+
+For HPC clusters or restricted environments where Docker is not available, you can convert the Docker image to a Singularity `.sif` file.
+
+**Prerequisites:**
+- Docker image already built (Step 1 above)
+- Models already downloaded to `utils/models/` (Step 2 above)
+- `singularity` or `apptainer` installed on the target machine
+
+### Build the `.sif` image
+
+```bash
+./build_singularity.sh
+```
+
+This creates `fsp-pipeline.sif` (~3–4 GB) from the Docker image. Takes ~5–10 minutes.
+
+### Run with Singularity
+
+```bash
+# Single recording
+./run_singularity.sh --input-id my_recording --lang es
+
+# Batch mode
+./run_singularity.sh --lang es
+```
+
+The `run_singularity.sh` wrapper automatically binds `ingestion/`, `inputs/`, `merged/`, and `utils/models/` into the container.
+
+---
+
+## Installation (native / WSL — without Docker)
+
+If you prefer to run without containers:
+
+```bash
+# 1 — Create model directories
+mkdir -p utils/models/nemo utils/models/huggingface
+
+# 2 — Download the FastText language-ID model (~126 MB)
+wget -q "https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN/download" \
+  -O utils/models/lid.176.bin
+
+# 3 — Create Python 3.11 virtual environment
 python3.11 -m venv venv
-
-# 4 – activate it
 source venv/bin/activate
 
-# 5 – up‑to‑date build tooling
+# 4 — Install dependencies
 pip install -U pip setuptools wheel
-
-# 6 – all Python dependencies
+pip install "Cython>=0.29"
+pip install --no-build-isolation youtokentome==1.0.6
 PIP_NO_BUILD_ISOLATION=1 pip install -r requirements.txt
 
-# 7 – output folders expected by the pipeline
-mkdir ingestion merged
+# 5 — Create runtime directories
+mkdir -p ingestion merged
+
+# 6 — Download ASR models (both Catalan and Spanish)
+python scripts/download_models.py --lang all
 ```
 
-Everything is now in place.  Test with the **Quick‑start** below.
-
----
-
-## Quick‑start
-
-Download, process and merge the two most recent videos of the Interior Catalunya channel:
+Then run directly:
 
 ```bash
-python pipeline_service.py \
-    --channel "https://www.youtube.com/@InteriorCatalunya/videos" \
-    --max 2
+# Single recording
+python pipeline_service.py --input-id my_recording --lang es
+
+# Batch mode
+python pipeline_service.py --lang es
 ```
 
-Outputs will appear in
+---
 
-* `inputs/wordlevel_alignment/final_output_<video‑id>.json`
-* `merged/final_output_<video‑id>.json` (+ .csv, .png if requested)
+## Pipeline Stages
+
+The orchestrator (`pipeline_service.py`) runs these steps in order:
+
+| # | Stage | Script | Output |
+|---|---|---|---|
+| 1 | **Normalize TSV** | `scripts/normalize_tsv.py` | `inputs/normalized/<id>/<id>_norm_mark.tsv` |
+| 2 | **Normalize audio** | `scripts/normalize_audio.py` | `inputs/normalized/<id>/<id>.wav` (16 kHz mono) |
+| 3 | **Generate final data** | `steps/generate_final_data.py` | Forced alignment → segmentation → per‑language ASR |
+| 4 | **Duration filter** | `scripts/duration_filter.py` | Removes segments < 2 s or > 30 s |
+| 5 | **ROVER merge** | `scripts/rover_merge.py` | Merged `rover_text` + CER/WER analytics |
 
 ---
 
-## Script reference
+## ASR Models
 
-Below is a **complete list of CLI entry‑points**.  Run any file with `-h/--help` for the authoritative parser.
+### Spanish (`--lang es`)
 
-### 1. `pipeline_service.py`
+| Model | Type | Source |
+|---|---|---|
+| `stt_es_conformer_ctc_large` | NeMo CTC | NVIDIA NGC |
+| `parakeet-rnnt-1.1b_cv17_es_ep18_1270h` | NeMo RNNT | HuggingFace (projecte‑aina) |
+| `stt_es_conformer_transducer_large` | NeMo RNNT | HuggingFace (nvidia) |
+| `whisper-large-v3` | Whisper | HuggingFace (openai) |
 
-High‑level orchestrator – call this **in almost all cases**.
+### Catalan (`--lang ca`)
 
-| Argument    | Type & default              | Description                                    |
-| ----------- | --------------------------- | ---------------------------------------------- |
-| `--video`   | str                         | Single YouTube URL or ID.                      |
-| `--channel` | str                         | Channel/playlist URL; processes newest videos. |
-| `--lang`    | `ca` \| `es` (default `ca`) | Language used by `normalize_tsv.py`.           |
-| `--max`     | int                         | Limit when using `--channel`.                  |
+| Model | Type | Source |
+|---|---|---|
+| `stt_ca_conformer_ctc_large` | NeMo CTC | NVIDIA NGC |
+| `whisper-large-v3-ca-3catparla` | Whisper | HuggingFace (projecte‑aina) |
+| `whisper-bsc-large-v3-cat` | Whisper | HuggingFace (langtech‑veu) |
+| `whisper-large-v3-ca-punctuated-3370h` | Whisper | HuggingFace (langtech‑veu) |
+| `stt_ca-es_conformer_transducer_large` | NeMo RNNT | HuggingFace (projecte‑aina) |
 
-Internally it calls the remaining scripts in the order shown below.
+### Shared (both languages)
 
----
-
-### 2. `scripts/youtube_ingest.py`
-
-| Argument                 | Description                                                             |
-| ------------------------ | ----------------------------------------------------------------------- |
-| `youtube_url`            | Full YouTube link or bare ID.                                           |
-| `--reject-license`, `-R` | Comma‑separated list (`youtube`, `creativeCommon`) to prevent download. |
-
-*Checks the licence → downloads audio as WAV → grabs official captions or falls back to Whisper large.  Produces `<video‑id>.wav` and `<video‑id>.tsv` inside `ingestion/`.  Exits gracefully if the licence is blocked.*
-
----
-
-### 3. `scripts/normalize_tsv.py`
-
-| Positional          | Description                                                                      |
-| ------------------- | -------------------------------------------------------------------------------- |
-| `input_tsv`         | A two‑column TSV: `wav_path<TAB>text`.                                           |
-| `lang`              | `ca` or `es` – language‐specific normalisation rules.                            |
-| `mark` *(optional)* | If provided, deduplicates sentences containing this marker before normalisation. |
-
-Writes `<input>_norm.tsv` (or `_norm_mark.tsv`) next to the source file.
+| Model | Type | Source |
+|---|---|---|
+| `lid.176.bin` | FastText language‑ID | [B2Drop](https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN) |
 
 ---
 
-### 4. `scripts/ingest_single.py`
+## Output Files
 
-| Option                      | Description                               |
-| --------------------------- | ----------------------------------------- |
-| `--session-id` *(required)* | YouTube video‑id – used for folder names. |
-| `--speaker`                 | Speaker label embedded in metadata JSON.  |
+After processing, results appear in `merged/`:
 
-Transcodes the newest WAV in `ingestion/` to the canonical 16 kHz mono format and produces
-
-* `inputs/segments/<session>/…wav`
-* `inputs/segments/<session>/<session>_metadata.json`
-* `inputs/manifest/<session>_manifest.json`
+```
+merged/
+  final_output_<input-id>.json   # Word-level aligned JSON with rover_text
+  final_output_<input-id>.csv    # Per-segment CER/WER table
+  final_output_<input-id>.png    # CER bar chart
+```
 
 ---
 
-### 5. `steps/generate_final_data.py`
-
-| Option      | Default                       | Description                                                                               |
-| ----------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
-| `--session` | *(required)*                  | Video‑id to process.                                                                      |
-| `--output`  | `final_output_<session>.json` | Custom JSON file name.                                                                    |
-| `--device`  | `auto`                        | `cuda`, `cpu` or auto‑detect.  Only affects the ASR stage; forced alignment stays on CPU. |
-
-Stages: forced alignment → language detection & segmentation → per‑language ASR loop → final JSON.
-
----
-
-### 6. `scripts/duration_filter.py`
-
-| Positional  | Description                      |
-| ----------- | -------------------------------- |
-| `json_path` | Path to a `final_output_*.json`. |
-
-Removes segment files *and* JSON entries whose duration is **≤ 2 s or > 30 s**.
-
----
-
-### 7. `scripts/rover_merge.py`
-
-| Option            | Description                                                         |
-| ----------------- | ------------------------------------------------------------------- |
-| `input_glob`      | Single JSON file or quoted glob pattern.                            |
-| `-o`, `--out-dir` | Destination folder (default `../merged`).                           |
-| `--fields`        | Space‑separated list of `pred_*` keys to merge.  Default: all.      |
-| `--langs`         | Languages to keep (`ca es`).                                        |
-| `--norm`          | Lower‑case + strip punctuation prior to scoring.                    |
-| `--strategy`      | `centroid` (Levenshtein barycentre) or `vote` (per‑token majority). |
-| `--csv`           | Emit a per‑segment CSV alongside the merged JSON.                   |
-| `--plot`          | Save a corpus‑level CER bar chart (.png).                           |
-
-Outputs a merged JSON **with a new `rover_text` field per segment** plus optional analytics.
-
----
-
-## Input/Output directories overview
+## Directory Structure
 
 ```
 .
-├─ ingestion/                 # transient audio + TSV inputs
-├─ inputs/
-│  ├─ manifest/              # NeMo manifests
-│  ├─ segments/              # canonicalised WAV + meta per video
-│  ├─ output_segment/        # short sentence‑level clips
-│  └─ wordlevel_alignment/   # final JSON & CTM files
-├─ merged/                    # ROVER outputs
-└─ utils/models/              # lid.176.bin
+├── ingestion/                  # ← Place input WAV + TSV pairs here
+├── inputs/
+│   ├── manifest/               # NeMo manifests (auto-generated)
+│   ├── normalized/             # Canonical WAV + normalized TSV + metadata
+│   ├── output_segment/         # Sentence-level clips + final JSON
+│   └── wordlevel_alignment/    # ASS + CTM alignment files
+├── merged/                     # ← Final outputs appear here (.json, .csv, .png)
+├── utils/models/               # ← Pre-downloaded models (mounted at runtime)
+│   ├── lid.176.bin             #   FastText language-ID model
+│   ├── nemo/                   #   NeMo .nemo checkpoints
+│   └── huggingface/            #   HuggingFace model snapshots
+├── scripts/
+│   ├── download_models.py      # Download models for offline use
+│   ├── normalize_tsv.py        # Text normalization
+│   ├── normalize_audio.py      # Audio resampling
+│   ├── duration_filter.py      # Remove too-short/long segments
+│   └── rover_merge.py          # Multi-hypothesis merging
+├── steps/
+│   └── generate_final_data.py  # Forced alignment + segmentation + ASR
+├── pipeline_service.py         # Main orchestrator
+├── Dockerfile                  # Docker image definition
+├── build_singularity.sh        # Docker → Singularity converter
+└── run_singularity.sh          # Singularity run wrapper
 ```
+
+---
+
+## Script Reference
+
+Run any script with `-h` / `--help` for full argument documentation.
+
+### `pipeline_service.py`
+
+| Argument | Description |
+|---|---|
+| `--input-id` | Process a single audio‑transcript pair (optional; omit for batch mode) |
+| `--lang` | `ca` or `es` (default: `ca`) |
+
+### `scripts/download_models.py`
+
+| Argument | Description |
+|---|---|
+| `--lang` | `ca`, `es`, or `all` (default: `all`) |
+| `--out-dir` | Root output directory (default: `utils/models`) |
+
+### `steps/generate_final_data.py`
+
+| Argument | Description |
+|---|---|
+| `--input-id` | WAV + TSV filename stem (required) |
+| `--lang` | `ca` or `es` (default: `ca`) |
+| `--output` | Custom JSON filename |
+| `--device` | `cuda`, `cpu`, or `auto` (default: `auto`) |
+
+### `scripts/rover_merge.py`
+
+| Argument | Description |
+|---|---|
+| `input_glob` | Single JSON file or quoted glob pattern |
+| `-o`, `--out-dir` | Destination folder (default: `merged/`) |
+| `--csv` | Emit per‑segment CSV alongside the merged JSON |
+| `--plot` | Save corpus‑level CER bar chart (`.png`) |
 
 ---
 
 ## Troubleshooting
 
-* **"ffmpeg: command not found"** – install `ffmpeg` via `apt‑get install ffmpeg`.
-* **CUDA out‑of‑memory** – run with `--device cpu` on `generate_final_data.py` or set `CUDA_VISIBLE_DEVICES=` in the environment.
+**"ffmpeg: command not found"**
+
+```bash
+sudo apt install ffmpeg
+```
+
+**Out of memory**
+
+- Add swap space:
+  ```bash
+  sudo fallocate -l 24G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
+  ```
+- Or force CPU‑only execution:
+  ```bash
+  CUDA_VISIBLE_DEVICES= python pipeline_service.py --lang es
+  ```
+
+**Docker commands require `sudo`**
+
+```bash
+sudo usermod -aG docker $USER
+# Log out and back in (or run: newgrp docker)
+```
+
+**Model download fails inside Docker**
+
+Pre‑download on the host and mount:
+```bash
+docker run --rm -v $(pwd)/utils/models:/app/utils/models \
+  fsp-pipeline python scripts/download_models.py --lang all
+```
+
+**`lid.176.bin cannot be opened for loading!`**
+
+The `lid.176.bin` file must exist on the **host** inside `utils/models/`. When you mount
+`utils/models/` into the container, it overwrites the copy that was downloaded during image build:
+```bash
+wget -q "https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN/download" \
+  -O utils/models/lid.176.bin
+```
+
+**Permission denied on `utils/models/`, `inputs/`, or `merged/`**
+
+If you ran Docker without `--user $(id -u):$(id -g)`, files may be owned by root. Fix retroactively:
+```bash
+sudo chown -R $(whoami) utils/models/ inputs/ merged/
+```
+To prevent this, always include `--user $(id -u):$(id -g)` in `docker run` commands.
+The `run_singularity.sh` script detects and auto-fixes this.
+
+**Singularity build fails with "no space left on device"**
+
+Apptainer uses `/tmp` for intermediate files. If your `/tmp` partition is small, `build_singularity.sh` 
+automatically redirects to `.apptainer_tmp/` in the project directory. If it still fails, 
+free up disk space or set `APPTAINER_TMPDIR` to a partition with ≥ 10 GB free.
+
 ---
+
+## Notes
+
+- Forced alignment always runs on CPU regardless of `--device` setting.
+- Batch mode continues processing even if an individual input fails.
+- Ensure ≥ 24 GB effective memory (RAM + swap) before processing long recordings.
+- The Docker image does **not** contain models — they are always mounted from the host at runtime.
