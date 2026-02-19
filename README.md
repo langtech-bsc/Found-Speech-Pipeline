@@ -69,6 +69,7 @@ wget -q "https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN/download" \
 
 # Download all ASR models — Catalan + Spanish (~15 GB)
 docker run --rm --user $(id -u):$(id -g) \
+  -e NUMBA_CACHE_DIR=/tmp -e MPLCONFIGDIR=/tmp \
   -v $(pwd)/utils/models:/app/utils/models \
   fsp-pipeline python scripts/download_models.py --lang all
 ```
@@ -77,10 +78,12 @@ To download only one language instead:
 
 ```bash
 docker run --rm --user $(id -u):$(id -g) \
+  -e NUMBA_CACHE_DIR=/tmp -e MPLCONFIGDIR=/tmp \
   -v $(pwd)/utils/models:/app/utils/models \
   fsp-pipeline python scripts/download_models.py --lang es    # Spanish only (~8 GB)
 
 docker run --rm --user $(id -u):$(id -g) \
+  -e NUMBA_CACHE_DIR=/tmp -e MPLCONFIGDIR=/tmp \
   -v $(pwd)/utils/models:/app/utils/models \
   fsp-pipeline python scripts/download_models.py --lang ca    # Catalan only (~7 GB)
 ```
@@ -94,6 +97,7 @@ docker run --rm --user $(id -u):$(id -g) \
 ```bash
 # Process a single recording
 docker run --rm --user $(id -u):$(id -g) \
+  -e NUMBA_CACHE_DIR=/tmp -e MPLCONFIGDIR=/tmp \
   -v $(pwd)/ingestion:/app/ingestion \
   -v $(pwd)/inputs:/app/inputs \
   -v $(pwd)/merged:/app/merged \
@@ -102,6 +106,7 @@ docker run --rm --user $(id -u):$(id -g) \
 
 # Batch mode — process all WAV+TSV pairs in ingestion/
 docker run --rm --user $(id -u):$(id -g) \
+  -e NUMBA_CACHE_DIR=/tmp -e MPLCONFIGDIR=/tmp \
   -v $(pwd)/ingestion:/app/ingestion \
   -v $(pwd)/inputs:/app/inputs \
   -v $(pwd)/merged:/app/merged \
@@ -115,6 +120,7 @@ Once all models are downloaded, you can run with no network access:
 
 ```bash
 docker run --rm --network=none --user $(id -u):$(id -g) \
+  -e NUMBA_CACHE_DIR=/tmp -e MPLCONFIGDIR=/tmp \
   -v $(pwd)/ingestion:/app/ingestion \
   -v $(pwd)/inputs:/app/inputs \
   -v $(pwd)/merged:/app/merged \
@@ -354,7 +360,9 @@ sudo usermod -aG docker $USER
 
 Pre‑download on the host and mount:
 ```bash
-docker run --rm -v $(pwd)/utils/models:/app/utils/models \
+docker run --rm --user $(id -u):$(id -g) \
+  -e NUMBA_CACHE_DIR=/tmp -e MPLCONFIGDIR=/tmp \
+  -v $(pwd)/utils/models:/app/utils/models \
   fsp-pipeline python scripts/download_models.py --lang all
 ```
 
