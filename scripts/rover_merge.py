@@ -87,8 +87,8 @@ def centroid(hyps: Sequence[str]) -> str:
     return best
 
 # metrics helpers
-def collect_pred_fields(seg: Dict) -> List[str]:
-    return [k for k in seg if k.startswith("pred_") and seg[k]]
+def collect_norm_fields(seg: Dict) -> List[str]:
+    return [k for k in seg if k.startswith("norm_") and seg[k]]
 
 def cer(ref: str, hyp: str) -> float:
     return edist(ref, hyp) / max(len(ref), 1)
@@ -101,8 +101,8 @@ def wer(ref: str, hyp: str) -> float:
 def process_file(path: Path, args) -> Tuple[float, float, int]:
     data = json.loads(path.read_text(encoding="utf-8"))
     any_seg = next(iter(data.values()))["results"][0]
-    pred_fields = args.fields or sorted(collect_pred_fields(any_seg))
-    print(f"[{path.name}]  merging over ➜ {pred_fields}")
+    norm_fields = args.fields or sorted(collect_norm_fields(any_seg))
+    print(f"[{path.name}]  merging over ➜ {norm_fields}")
 
     rows: List[Dict] = []
     tot_chars = err_ro_c = err_ro_w = 0.0
@@ -126,7 +126,7 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
             seg["rover_text"] = vote_out
             tot_chars += len(ref_norm)
 
-            for f, h in zip(pred_fields, hyps_norm):
+            for f, h in zip(norm_fields, hyps_norm):
                 err_baseline[f] += cer(ref_norm, h) * len(ref_norm)
             err_ro_c += cer(ref_norm, vote_out) * len(ref_norm)
             err_ro_w += wer(ref_norm, vote_out) * len(ref_norm)
@@ -148,11 +148,11 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
         pd.DataFrame(rows).to_csv(out_json.with_suffix(".csv"), index=False)
 
     if args.plot and plt and tot_chars:
-        bars = [err_baseline[f] / tot_chars for f in pred_fields] \
+        bars = [err_baseline[f] / tot_chars for f in norm_fields] \
                + [err_ro_c / tot_chars]
         plt.figure(figsize=(max(6, 1.2 * len(bars)), 4))
         plt.bar(range(len(bars)), bars)
-        clean = [re.sub(r"^pred_text_", "", f) for f in pred_fields] + ["ROVER"]
+        clean = [re.sub(r"^pred_text_", "", f) for f in norm_fields] + ["ROVER"]
         plt.xticks(range(len(bars)), clean, rotation=45, ha="right")
         plt.ylabel("Corpus CER")
         plt.title(f"{path.name}  ({','.join(sorted(keep_langs))})")
