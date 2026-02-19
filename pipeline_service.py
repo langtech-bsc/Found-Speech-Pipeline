@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
 pipeline_service.py – orchestrates the FSP pipeline
+(starting from existing WAV + TSV files)
+
+Modes
+-----
+• Single:  --input-id <id>
+• Batch:   (no --input-id) → auto-detect all valid pairs in ingestion/
 """
+
 from __future__ import annotations
-import argparse, shutil, subprocess, sys
+import argparse, subprocess, sys
 from pathlib import Path
 from typing import List
-from urllib.parse import parse_qs, urlparse
 
 # project paths
 ROOT          = Path(__file__).resolve().parent
@@ -16,34 +22,11 @@ STEPS_DIR     = ROOT / "steps"
 ROVER_DIR     = ROOT / "merged"
 ROVER_DIR.mkdir(exist_ok=True, parents=True)
 
-PY            = sys.executable
+PY = sys.executable
 
-# helper functions
-def video_id(url: str) -> str:
-    u = urlparse(url)
-    if u.hostname and u.hostname.endswith("youtu.be"):
-        return u.path.lstrip("/")
-    q = parse_qs(u.query).get("v")
-    if q:
-        return q[0]
-    parts = [p for p in u.path.split("/") if p]
-    for marker in ("embed", "v"):
-        if marker in parts and parts.index(marker) + 1 < len(parts):
-            return parts[parts.index(marker) + 1]
-    raise ValueError(f"Cannot extract id from {url!r}")
-
-
-def list_videos_in_channel(url: str, limit: int | None = None) -> list[str]:
-    import yt_dlp
-    opts = {"quiet": True, "skip_download": True, "extract_flat": "in_playlist"}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-    return [
-        f"https://youtu.be/{e['id']}"
-        for e in (info.get("entries") or [])
-        if e and e.get("ie_key") == "Youtube"
-    ][: limit]
-
+# -------------------------------------------------
+# Helpers
+# -------------------------------------------------
 
 def run(label: str,
         cmd:  List[str | Path],
@@ -54,62 +37,111 @@ def run(label: str,
     if subprocess.run(cmd, cwd=cwd, env=env).returncode:
         sys.exit(f"✖  {label} failed")
 
-#  five-step pipeline
-def process_single_video(url: str, lang: str) -> None:
-    vid = video_id(url)
-    raw_tsv        = INGESTION_DIR / f"{vid}.tsv"
-    out_json_name  = f"final_output_{vid}.json"
-    out_json_path  = ROOT / "inputs" / "wordlevel_alignment" / out_json_name
+def find_valid_input_ids() -> list[str]:
+    """
+    Scan ingestion/ and return all valid audio-transcript pair IDs
+    (that have BOTH .wav and .tsv files).
+    """
+    wav_ids = {p.stem for p in INGESTION_DIR.glob("*.wav")}
+    tsv_ids = {p.stem for p in INGESTION_DIR.glob("*.tsv")}
 
-    shutil.rmtree(INGESTION_DIR, ignore_errors=True)
-    INGESTION_DIR.mkdir(parents=True, exist_ok=True)
+    valid_ids = sorted(wav_ids & tsv_ids)
 
-    run("YouTube ingest", [PY, SCRIPTS_DIR / "youtube_ingest.py", url])
+    if not valid_ids:
+        print("⚠️  No valid (.wav + .tsv) pairs found in ingestion/")
+    else:
+        print(f"🔎 Found {len(valid_ids)} valid input pair(s)")
 
+    return valid_ids
+
+
+
+# -------------------------------------------------
+# Pipeline
+# -------------------------------------------------
+
+def process_existing_paired_input(input_id: str, lang: str) -> None:
+
+    raw_tsv = INGESTION_DIR / f"{input_id}.tsv"
+    raw_wav = INGESTION_DIR / f"{input_id}.wav"
+
+    if not raw_tsv.exists() or not raw_wav.exists():
+        raise RuntimeError(f"Missing pair for input ID: {input_id}")
+
+    out_json_name = f"final_output_{input_id}.json"
+    out_json_path = ROOT / "inputs" / "output_segment" / out_json_name
+    
+    # 1️⃣ Normalize TSV
     run("Normalise TSV",
-        [PY, SCRIPTS_DIR / "normalize_tsv_v2.py", raw_tsv, lang, "|"])
-#    raw_tsv.unlink(missing_ok=True)
+        [PY, SCRIPTS_DIR / "normalize_tsv.py", raw_tsv, lang, ". "])
 
+    # 2️⃣ Normalize audio + metadata 
     run("Ingest single",
-        [PY, SCRIPTS_DIR / "ingest_single.py", f"--session-id={vid}"])
+        [PY, SCRIPTS_DIR / "normalize_audio.py", f"--input-id={input_id}"])
 
-    # CPU-only forced alignment
+    # 3️⃣ CPU-only forced alignment
     run("Generate final data",
         ["env", "CUDA_VISIBLE_DEVICES=", PY,
          STEPS_DIR / "generate_final_data.py",
-         f"--session={vid}", "--output", out_json_name])
+         f"--input-id={input_id}", f"--lang={lang}", "--output", out_json_name])
+    
 
+    # 4️⃣ Duration filter
     run("Duration filter",
         [PY, SCRIPTS_DIR / "duration_filter.py", out_json_path])
 
-    # ROVER merge
+    # 5️⃣ ROVER merge
     run("ROVER merge",
         [PY, SCRIPTS_DIR / "rover_merge.py",
          out_json_path, "--csv", "--plot", "--out-dir", ROVER_DIR])
 
+
+# -------------------------------------------------
 # CLI
+# -------------------------------------------------
 def main() -> None:
-    ap = argparse.ArgumentParser("Run the FSP pipeline on YouTube data")
-    g  = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--video")
-    g.add_argument("--channel")
+    ap = argparse.ArgumentParser("Run FSP pipeline from existing WAV+TSV")
+    ap.add_argument("--input-id", help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)")
     ap.add_argument("--lang", choices=("ca", "es"), default="ca")
-    ap.add_argument("--max", type=int)
+
     args = ap.parse_args()
 
-    urls = [args.video] if args.video else list_videos_in_channel(args.channel, args.max)
+    if not INGESTION_DIR.exists():
+        sys.exit("❌ ingestion/ directory not found")
 
-    for n, url in enumerate(urls, 1):
+    # -------------------------------
+    # SINGLE MODE
+    # -------------------------------
+    if args.input_id:
         print("\n" + "═" * 70)
-        print(f"[{n}/{len(urls)}]  {video_id(url)}")
+        print(f"Processing single audio-transcript pair: {args.input_id}")
         print("═" * 70)
-        try:
-            process_single_video(url, args.lang)
-        except SystemExit as e:
-            print(e, "\n⚠️  Skipping this video.")
 
-    print("\n✅  Pipeline finished – find per-video JSON in",
+        try:
+            process_existing_paired_input(args.input_id, args.lang)
+        except Exception as e:
+            sys.exit(f"❌ {e}")
+
+    # -------------------------------
+    # BATCH MODE
+    # -------------------------------
+    else:
+        input_ids = find_valid_input_ids()
+
+        for i, input_id in enumerate(input_ids, 1):
+            print("\n" + "═" * 70)
+            print(f"[{i}/{len(input_ids)}] Processing {input_id}")
+            print("═" * 70)
+
+            try:
+                process_existing_paired_input(input_id, args.lang)
+            except Exception as e:
+                print(f"❌ Failed: {input_id} → {e}")
+                print("⚠️  Skipping...\n")
+
+    print("\n✅ Pipeline finished – find JSON in",
           ROOT / "inputs" / "wordlevel_alignment")
+
 
 if __name__ == "__main__":
     main()
