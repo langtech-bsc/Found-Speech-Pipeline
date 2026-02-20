@@ -159,6 +159,9 @@ This creates `fsp-pipeline.sif` (~3–4 GB) from the Docker image. Takes ~5–10
 
 The `run_singularity.sh` wrapper automatically binds `ingestion/`, `inputs/`, `merged/`, and `utils/models/` into the container.
 
+> [!TIP]
+> Both `run_singularity.sh` and `docker run` commands pass all trailing arguments directly to `pipeline_service.py`. You can append any flag (like `--v2-norm`) to these commands.
+
 ---
 
 ## Installation (native / WSL — without Docker)
