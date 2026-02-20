@@ -12,7 +12,7 @@ Supported languages: **Catalan** (`ca`) and **Spanish** (`es`).
 
 | Requirement | Notes |
 |---|---|
-| ≥ 24 GB RAM (or RAM + swap) | Whisper‑large‑v3 and forced alignment are memory‑hungry |
+| ≥ 24 GB RAM (or RAM + swap) | Whisper‑large‑v3 and forced alignment are memory‑hungry. **Lacking memory will cause silent crashes (OOM kills) without error logs.** |
 | Ubuntu 22.04+ (native, WSL 2, or Docker) | Verified host for NVIDIA NeMo |
 | FFmpeg on `$PATH` | Transcodes audio to 16 kHz mono WAV (included in Docker image) |
 | (Optional) CUDA 11+ | Speeds up Whisper and RNNT by ~4× |
@@ -208,10 +208,10 @@ The orchestrator (`pipeline_service.py`) runs these steps in order:
 
 | # | Stage | Script | Output |
 |---|---|---|---|
-| 1 | **Normalize TSV** | `scripts/normalize_tsv.py` | `inputs/normalized/<id>/<id>_norm_mark.tsv` |
+| 1 | **Normalize TSV** | `scripts/normalize_tsv.py` (or `_v2.py`) | `inputs/normalized/<id>/<id>_norm_mark.tsv` |
 | 2 | **Normalize audio** | `scripts/normalize_audio.py` | `inputs/normalized/<id>/<id>.wav` (16 kHz mono) |
 | 3 | **Generate final data** | `steps/generate_final_data.py` | Forced alignment → segmentation → per‑language ASR |
-| 4 | **Duration filter** | `scripts/duration_filter.py` | Removes segments < 2 s or > 30 s |
+| 4 | **Duration filter** | `scripts/duration_filter.py` | Removes segments < 2 s or > 60 s |
 | 5 | **ROVER merge** | `scripts/rover_merge.py` | Merged `rover_text` + CER/WER analytics |
 
 ---
@@ -249,11 +249,11 @@ The orchestrator (`pipeline_service.py`) runs these steps in order:
 
 After processing, results appear in `merged/`:
 
-```
+```text
 merged/
-  final_output_<input-id>.json   # Word-level aligned JSON with rover_text
-  final_output_<input-id>.csv    # Per-segment CER/WER table
-  final_output_<input-id>.png    # CER bar chart
+  final_output_<input-id>.json   # Word-level aligned JSON containing all ASR hypotheses and mapped rover_text
+  final_output_<input-id>.csv    # Per-segment CER/WER metrics comparing each model against the ground truth
+  final_output_<input-id>.png    # Corpus-level CER bar chart visualization
 ```
 
 ---
@@ -299,6 +299,7 @@ Run any script with `-h` / `--help` for full argument documentation.
 |---|---|
 | `--input-id` | Process a single audio‑transcript pair (optional; omit for batch mode) |
 | `--lang` | `ca` or `es` (default: `ca`) |
+| `--v2-norm` | Use experimental V2 text normalization (`normalize_tsv_v2.py`) |
 
 ### `scripts/download_models.py`
 
@@ -335,19 +336,27 @@ Run any script with `-h` / `--help` for full argument documentation.
 sudo apt install ffmpeg
 ```
 
-**Out of memory**
+**Silent crashes / Out of memory (OOM Kill)**
 
-- Add swap space:
-  ```bash
-  sudo fallocate -l 24G /swapfile
-  sudo chmod 600 /swapfile
-  sudo mkswap /swapfile
-  sudo swapon /swapfile
-  ```
-- Or force CPU‑only execution:
-  ```bash
-  CUDA_VISIBLE_DEVICES= python pipeline_service.py --lang es
-  ```
+If the pipeline abruptly dies without an error log (e.g., stopping at `Loading checkpoint shards: 0%`), your system ran out of memory and the OS killed the process. The ASR models (especially Whisper) require massive amounts of RAM to load.
+
+**Fix 1: Add Swap Space (Recommended for CPU-only or low RAM)**
+If you do not have a GPU or have less than 24GB of physical RAM, you *must* add swap space to prevent the OS from killing the process:
+```bash
+sudo fallocate -l 24G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
+
+**Fix 2: Use GPU (If available)**
+Ensure you pass `--gpus all` to your regular `docker run` command. The pipeline will automatically offload ASR models to the GPU, drastically reducing system RAM usage.
+
+**Fix 3: Force CPU-only execution (If GPU OOMs)**
+If your GPU runs out of VRAM and crashes, you can force the pipeline to fall back to system RAM instead (you will likely need the swap space from Fix 1):
+```bash
+CUDA_VISIBLE_DEVICES= python pipeline_service.py --lang es
+```
 
 **Docker commands require `sudo`**
 
@@ -394,7 +403,8 @@ free up disk space or set `APPTAINER_TMPDIR` to a partition with ≥ 10 GB free.
 
 ## Notes
 
-- Forced alignment always runs on CPU regardless of `--device` setting.
-- Batch mode continues processing even if an individual input fails.
-- Ensure ≥ 24 GB effective memory (RAM + swap) before processing long recordings.
-- The Docker image does **not** contain models — they are always mounted from the host at runtime.
+- **V2 Normalization**: Passing `--v2-norm` enables an alternative text normalization logic (`clean_and_split.py`). This approach handles punctuation differently and preserves characters such as Greek letters and math symbols for downstream transcription.
+- **CPU Alignment**: Forced alignment always runs on the CPU. This is a deliberate design choice to prevent out-of-memory errors on the GPU when processing very long recordings.
+- **Resilience**: Batch mode continues processing subsequent files even if an individual recording fails.
+- **Resource Limits**: Ensure ≥ 24 GB effective memory (RAM + swap) before processing.
+- **Stateless Containers**: The Docker image does **not** contain models — they are always mounted from the host at runtime. This keeps the image lean and enables fast reuse.
