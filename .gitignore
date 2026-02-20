@@ -41,3 +41,4 @@ untracked_backups/
 build_singularity.sh
 run_singularity.sh
 utils/models/
+scripts/fetch_transcript.py
