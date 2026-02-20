@@ -237,6 +237,7 @@ The pipeline offers two normalization paths. The default (V1) is optimized for s
     *   Uses a different sentence splitter (`sentence-splitter`).
     *   **Preserves specialized characters:** Greek letters, math symbols, and currency symbols are kept (mapped via language-specific dictionaries).
     *   Maintains more robust punctuation mapping.
+    *   **Single-segment behavior:** Unlike V1, V2 normalization currently treats each TSV line as a **single large segment** for the aligner. If your input line is longer than 60s, you must increase the duration filter limit (see Troubleshooting).
     *   Ideal for technical or scientific transcripts where symbol preservation helps the ASR context.
 
 ---
