@@ -60,7 +60,7 @@ def find_valid_input_ids() -> list[str]:
 # Pipeline
 # -------------------------------------------------
 
-def process_existing_paired_input(input_id: str, lang: str) -> None:
+def process_existing_paired_input(input_id: str, lang: str, v2_norm: bool = False) -> None:
 
     raw_tsv = INGESTION_DIR / f"{input_id}.tsv"
     raw_wav = INGESTION_DIR / f"{input_id}.wav"
@@ -72,17 +72,20 @@ def process_existing_paired_input(input_id: str, lang: str) -> None:
     out_json_path = ROOT / "inputs" / "output_segment" / out_json_name
     
     # 1️⃣ Normalize TSV
-    run("Normalise TSV",
-        [PY, SCRIPTS_DIR / "normalize_tsv.py", raw_tsv, lang, ". "])
+    if v2_norm:
+        run("Normalise TSV (V2)",
+            [PY, SCRIPTS_DIR / "normalize_tsv_v2.py", raw_tsv, lang, ". "])
+    else:
+        run("Normalise TSV",
+            [PY, SCRIPTS_DIR / "normalize_tsv.py", raw_tsv, lang, ". "])
 
     # 2️⃣ Normalize audio + metadata 
     run("Ingest single",
         [PY, SCRIPTS_DIR / "normalize_audio.py", f"--input-id={input_id}"])
 
-    # 3️⃣ CPU-only forced alignment
+    # 3️⃣ Generate final data (aligner runs on CPU internally, but ASR can use GPU)
     run("Generate final data",
-        ["env", "CUDA_VISIBLE_DEVICES=", PY,
-         STEPS_DIR / "generate_final_data.py",
+        [PY, STEPS_DIR / "generate_final_data.py",
          f"--input-id={input_id}", f"--lang={lang}", "--output", out_json_name])
     
 
@@ -103,6 +106,7 @@ def main() -> None:
     ap = argparse.ArgumentParser("Run FSP pipeline from existing WAV+TSV")
     ap.add_argument("--input-id", help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)")
     ap.add_argument("--lang", choices=("ca", "es"), default="ca")
+    ap.add_argument("--v2-norm", action="store_true", help="Use experimental V2 text normalization")
 
     args = ap.parse_args()
 
@@ -118,7 +122,7 @@ def main() -> None:
         print("═" * 70)
 
         try:
-            process_existing_paired_input(args.input_id, args.lang)
+            process_existing_paired_input(args.input_id, args.lang, args.v2_norm)
         except Exception as e:
             sys.exit(f"❌ {e}")
 
@@ -134,7 +138,7 @@ def main() -> None:
             print("═" * 70)
 
             try:
-                process_existing_paired_input(input_id, args.lang)
+                process_existing_paired_input(input_id, args.lang, args.v2_norm)
             except Exception as e:
                 print(f"❌ Failed: {input_id} → {e}")
                 print("⚠️  Skipping...\n")
