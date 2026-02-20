@@ -8,25 +8,28 @@ it keeps some chars (numbers, greek letters, math symbols, etc.) that will be tr
 
 use:
 	python clean_and_split.py <input>
-
-input can be a .txt file, a .tsv or .csv file or a string
-
 """
 
 import string
 import re
 import sys
 import pandas as pd
-from norm_dicts_ca import currency, phisics_and_maths, greek_letters # they will be transcribed later
 
 letters = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôû"
 ortographic_chars = "'’· -@"
 punctuation_chars = ",()¡¿\"«»“”‘’;"
 numeric_chars = "0123456789%+-º"
 end_of_sent_chars = ".?!:…" # used to split sentences
-valid_chars = letters + ortographic_chars + numeric_chars + end_of_sent_chars + "".join(currency.keys()) + "".join(phisics_and_maths.keys()) + "".join(greek_letters.keys())
 
 general_abreviations = ["sr.", "sra.", "srs.", "dr.", "dra.", "srta.", "mss.", "ms.", "mr.", "st.", "sta.", "km.", "m.", "s.", "kg.", "vs.", "num.", "núm."] # dots that are not end of sentence
+
+def get_valid_chars(lang="ca"):
+    if lang == "ca":
+        from norm_dicts_ca import currency, phisics_and_maths, greek_letters
+    else:
+        from norm_dicts_es import currency, phisics_and_maths, greek_letters
+    
+    return letters + ortographic_chars + numeric_chars + end_of_sent_chars + "".join(currency.keys()) + "".join(phisics_and_maths.keys()) + "".join(greek_letters.keys())
 
 def remove_bad_cases(cadena, punctuation): # adapted from Carlos' script
 	cadena = re.sub(r'(?<=\d)\.(?=\d{3}($|\.))', "", cadena) # remove dots from thousands and milions
@@ -90,7 +93,8 @@ def remove_abr_dots(clean_text): # remove the abreviations dots before sentence 
             splitted_text[i] = token[:-1]
     return " ".join(splitted_text)
 
-def remove_chars(input_text, punctuation):
+def remove_chars(input_text, punctuation, lang="ca"):
+	valid_chars = get_valid_chars(lang)
 	input_text = input_text.replace("\n", ".").replace(" - ", ".").replace(" · ", ".").replace("|", ".") # chars that might be used as end of sentence
 	first_clean = remove_bad_cases(input_text, punctuation) # just keep commas, -, · and ' when needed
 	if punctuation==True:
@@ -118,7 +122,7 @@ def create_filename(input_file):
     
 def process_txt(input, punctuation):
 	input_text = open(sys.argv[1],'r').read()
-	result = split_text(remove_chars(input_text, punctuation), punctuation)
+	result = split_text(remove_chars(input_text, punctuation, "ca"), punctuation, "#")
 	output_file = create_filename(input)
 	with open(output_file, "w") as f:
 		for sent in result:
@@ -128,7 +132,7 @@ def process_txt(input, punctuation):
 def process_tsv(input, punctuation):
 	try:
 		df = pd.read_csv(input, sep="\t", names=["path", "text"])
-		df["clean_text"]=df.apply(lambda x: split_text(remove_chars(x.text, punctuation), punctuation), axis=1)
+		df["clean_text"]=df.apply(lambda x: split_text(remove_chars(x.text, punctuation, "ca"), punctuation, "#"), axis=1)
 		output_file = create_filename(input)
 		df.to_csv(output_file, sep="\t")
 		print(f"Results saved in {output_file}")
@@ -148,7 +152,7 @@ def main():
 	elif input[-4:] == ".tsv" or input[-4:] == ".csv":
 		process_tsv(input, punctuation)
 	else:
-		print(split_text(remove_chars(input, punctuation), punctuation, mark))
+		print(split_text(remove_chars(input, punctuation, "ca"), punctuation, mark))
 	
 		
 if __name__ == "__main__":
