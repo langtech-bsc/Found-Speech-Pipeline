@@ -216,6 +216,28 @@ The orchestrator (`pipeline_service.py`) runs these steps in order:
 
 ---
 
+## Text Normalization (V1 vs V2)
+
+The pipeline offers two normalization paths. The default (V1) is optimized for standard speech-to-text, while V2 is experimental and more conservative with special characters.
+
+### V1 Normalization (Standard)
+*   **Script:** `scripts/normalize.py`
+*   **Behavior:** 
+    *   Aggressively strips punctuation and special symbols.
+    *   Expands numbers to words (e.g., "10" → "deu").
+    *   Best for general-purpose ASR where punctuation isn't critical for the ground truth.
+
+### V2 Normalization (Experimental)
+*   **Flag:** Enable with `--v2-norm`
+*   **Script:** `scripts/clean_and_split.py`
+*   **Behavior:**
+    *   Uses a different sentence splitter (`sentence-splitter`).
+    *   **Preserves specialized characters:** Greek letters, math symbols, and currency symbols are kept (mapped via language-specific dictionaries).
+    *   Maintains more robust punctuation mapping.
+    *   Ideal for technical or scientific transcripts where symbol preservation helps the ASR context.
+
+---
+
 ## ASR Models
 
 ### Spanish (`--lang es`)
@@ -295,6 +317,8 @@ Run any script with `-h` / `--help` for full argument documentation.
 
 ### `pipeline_service.py`
 
+The main entry point. Orchestrates all stages.
+
 | Argument | Description |
 |---|---|
 | `--input-id` | Process a single audio‑transcript pair (optional; omit for batch mode) |
@@ -303,27 +327,51 @@ Run any script with `-h` / `--help` for full argument documentation.
 
 ### `scripts/download_models.py`
 
+Utility to pre-cache models on the host for offline use.
+
 | Argument | Description |
 |---|---|
 | `--lang` | `ca`, `es`, or `all` (default: `all`) |
 | `--out-dir` | Root output directory (default: `utils/models`) |
 
+### `scripts/normalize_audio.py`
+
+Resamples original audio and prepares the initial metadata JSON.
+
+| Argument | Description |
+|---|---|
+| `--input-id` | WAV + TSV filename stem (required) |
+
 ### `steps/generate_final_data.py`
+
+The core processing engine. Handle carefully.
 
 | Argument | Description |
 |---|---|
 | `--input-id` | WAV + TSV filename stem (required) |
 | `--lang` | `ca` or `es` (default: `ca`) |
-| `--output` | Custom JSON filename |
+| `--output` | Custom JSON filename (default: `final_output_<id>.json`) |
 | `--device` | `cuda`, `cpu`, or `auto` (default: `auto`) |
 
-### `scripts/rover_merge.py`
+### `scripts/duration_filter.py`
+
+Cleans up segments that are too short or too long.
 
 | Argument | Description |
 |---|---|
-| `input_glob` | Single JSON file or quoted glob pattern |
+| `json_file` | Path to the metadata JSON (required) |
+| `--min` | Minimum duration in seconds (default: 2) |
+| `--max` | Maximum duration in seconds (default: 30) |
+
+### `scripts/rover_merge.py`
+
+Generates CER/WER analytics and plots.
+
+| Argument | Description |
+|---|---|
+| `input_glob` | Single JSON file or quoted glob pattern (e.g., `"merged/*.json"`) |
 | `-o`, `--out-dir` | Destination folder (default: `merged/`) |
-| `--csv` | Emit per‑segment CSV alongside the merged JSON |
+| `--csv` | Emit per‑segment CER/WER CSV table |
 | `--plot` | Save corpus‑level CER bar chart (`.png`) |
 
 ---
