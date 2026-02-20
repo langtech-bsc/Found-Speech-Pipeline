@@ -364,7 +364,7 @@ Cleans up segments that are too short or too long.
 |---|---|
 | `json_file` | Path to the metadata JSON (required) |
 | `--min` | Minimum duration in seconds (default: 2) |
-| `--max` | Maximum duration in seconds (default: 30) |
+| `--max` | Maximum duration in seconds (default: 30, but **pipeline uses 60 by default**) |
 
 ### `scripts/rover_merge.py`
 
@@ -399,6 +399,12 @@ sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile
 ```
+
+**"No segments found / Skipping" in ROVER merge**
+
+If you see a warning that segments are being filtered out, it is usually because the transcript segments are longer than the default 60-second limit.
+*   **Fix:** Edit `pipeline_service.py` and increase the `--max` value in the `Duration filter` stage (e.g., change `"60"` to `"180"`).
+*   **Why?** Very long segments (e.g., > 120s) may cause memory issues or alignment failures with some ASR models.
 
 **Fix 2: Use GPU (If available)**
 Ensure you pass `--gpus all` to your regular `docker run` command. The pipeline will automatically offload ASR models to the GPU, drastically reducing system RAM usage.
