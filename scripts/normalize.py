@@ -109,16 +109,14 @@ def clean_text(input_text, lang):
         from norm_dicts_es import abr_dict, keep_initials, roman_nums, follow_proper_name, acronyms_dict, accepted_chars, dots_and_commas
         from norm_dicts_es import lang_cleaning_text
     elif lang == "eu":
-        # Basque: use external normalizer binary
+        # Basque: modulo1y2 binary already handles num2words, ordinals, abbreviations, currency
         from norm_eu import normalize_eu
-        # Use accepted chars from catalan
         from norm_dicts_ca import accepted_chars
         return finalize_text(normalize_eu(input_text), accepted_chars)
     elif lang == "gl":
-        # Galician: use Cotovia TTS preprocessor
+        # Galician: Cotovia already handles num2words, ordinals, abbreviations, currency, punctuation
         from norm_gl import normalize_gl
-        # Use accepted chars from catalan
-        from norm_dicts_ca import accepted_chars 
+        from norm_dicts_ca import accepted_chars
         return finalize_text(normalize_gl(input_text), accepted_chars)
     else:
         print("sorry, language not supported")

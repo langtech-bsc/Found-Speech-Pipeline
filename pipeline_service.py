@@ -79,9 +79,9 @@ def process_existing_paired_input(input_id: str, lang: str) -> None:
     run("Ingest single",
         [PY, SCRIPTS_DIR / "normalize_audio.py", f"--input-id={input_id}"])
 
-    # 3️⃣ CPU-only forced alignment
+    # 3️⃣ Forced alignment + ASR scoring
     run("Generate final data",
-        ["env", "CUDA_VISIBLE_DEVICES=", PY,
+        [PY,
          STEPS_DIR / "generate_final_data.py",
          f"--input-id={input_id}", f"--lang={lang}", "--output", out_json_name])
     
@@ -95,6 +95,11 @@ def process_existing_paired_input(input_id: str, lang: str) -> None:
         [PY, SCRIPTS_DIR / "rover_merge.py",
          out_json_path, "--csv", "--plot", "--out-dir", ROVER_DIR])
 
+    # 6️⃣ Punctuation & Capitalization restoration
+    rover_json = ROVER_DIR / f"final_output_{input_id}.json"
+    run("Punctuation & Capitalization",
+        [PY, SCRIPTS_DIR / "punctuate.py", rover_json])
+
 
 # -------------------------------------------------
 # CLI
@@ -102,7 +107,7 @@ def process_existing_paired_input(input_id: str, lang: str) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser("Run FSP pipeline from existing WAV+TSV")
     ap.add_argument("--input-id", help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)")
-    ap.add_argument("--lang", choices=("ca", "es"), default="ca")
+    ap.add_argument("--lang", choices=("ca", "es", "eu", "gl"), default="ca")
 
     args = ap.parse_args()
 

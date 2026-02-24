@@ -100,8 +100,19 @@ def wer(ref: str, hyp: str) -> float:
 #  per-file processing
 def process_file(path: Path, args) -> Tuple[float, float, int]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    any_seg = next(iter(data.values()))["results"][0]
-    pred_fields = args.fields or sorted(collect_pred_fields(any_seg))
+    # Discover pred_* fields from any segment (not all have them)
+    pred_fields = args.fields
+    if not pred_fields:
+        for block in data.values():
+            for seg in block["results"]:
+                found = collect_pred_fields(seg)
+                if found:
+                    pred_fields = sorted(found)
+                    break
+            if pred_fields:
+                break
+    if not pred_fields:
+        pred_fields = []
     print(f"[{path.name}]  merging over ➜ {pred_fields}")
     
     if not pred_fields:
@@ -119,7 +130,7 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
                 continue
 
             ref = seg["normalized_text"]
-            hyps_raw = [seg[f] for f in pred_fields]
+            hyps_raw = [seg.get(f, "") for f in pred_fields]
 
             ref_norm = normalise(ref) if args.norm else ref
             hyps = [clean_pred(h) for h in hyps_raw]
@@ -194,7 +205,7 @@ def parse_cli() -> argparse.Namespace:
     p.add_argument("-o", "--out-dir", type=Path, default=Path("../merged"))
     p.add_argument("--fields", nargs="+",
                    help="explicit list of pred_* fields to merge over")
-    p.add_argument("--langs", nargs="+", default=["ca", "es"],
+    p.add_argument("--langs", nargs="+", default=["ca", "es", "eu", "gl"],
                    help="ISO-639-1 language codes to keep")
     p.add_argument("--norm", action="store_true",
                    help="normalise text before scoring (lower+punct-strip)")

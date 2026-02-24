@@ -50,15 +50,23 @@ logging.basicConfig(
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser("Generate word-level aligned JSON (one input-id)")
     p.add_argument("--input-id", required=True, help="YouTube video-id to process")
-    p.add_argument("--lang", choices=("ca", "es"), default="ca", help="Primary language (only its CTC model is loaded)")
+    p.add_argument("--lang", choices=("ca", "es", "eu", "gl"), default="ca", help="Primary language (only its CTC model is loaded)")
     p.add_argument("--output", metavar="NAME.json", help="Custom JSON name (default: final_output_<input-id>.json)")
     p.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto", help="Run ASR on cuda / cpu (default auto)")
     return p.parse_args()
 
 
-ARGS = parse_args()
-if not ARGS.output:
-    ARGS.output = f"final_output_{ARGS.input_id}.json"
+# Only parse CLI args when run as a script, not when imported
+ARGS = None
+if __name__ == "__main__" or "pytest" not in sys.modules:
+    try:
+        ARGS = parse_args()
+        if not ARGS.output:
+            ARGS.output = f"final_output_{ARGS.input_id}.json"
+    except SystemExit:
+        # Allow import without CLI args (e.g. for testing)
+        pass
+
 
 # model catalogue
 MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
@@ -171,10 +179,11 @@ def unload_model(model) -> None:
             torch.cuda.empty_cache()
 
 
-def transcribe(model, kind: str, audio: str) -> str:
+def transcribe(model, kind: str, audio: str, lang: str = "ca") -> str:
     """Run *model* on *audio* and normalise the string it returns."""
     if kind == "pipe":
-        out = model(audio, generate_kwargs={"task": "transcribe"})
+        gen_kwargs = {"task": "transcribe", "language": lang}
+        out = model(audio, generate_kwargs=gen_kwargs)
         if isinstance(out, dict):
             txt = out.get("text", "")
         elif isinstance(out, list) and out and isinstance(out[0], dict):
@@ -255,11 +264,13 @@ def clean_text(text: str, label: str) -> str:
     elif label == "__label__es":
         text = numbers_to_words(text.replace("%", " por ciento"), "spa")
     elif label == "__label__eu":
-        # Basque: keep text mostly as-is (num2words doesn't support eu)
-        text = text.replace("%", " ehuneko")
+        # Basque: skip numbers_to_words() — the upstream modulo1y2 normalizer
+        # (in normalize.py / norm_eu.py) already converts numbers to words
+        pass
     elif label == "__label__gl":
-        # Galician: close to Spanish for num2words purposes
-        text = numbers_to_words(text.replace("%", " por cento"), "spa")
+        # Galician: skip numbers_to_words() — the upstream Cotovia normalizer
+        # (in normalize.py / norm_gl.py) already converts numbers to words
+        pass
 
     forbidden = set(",;:?¿«»-¡!@*{}[]=/\\&#…")
     text = "".join(ch if ch not in forbidden else " " for ch in text)
@@ -325,20 +336,23 @@ def main() -> None:
     # Static resources
     lid_model = fasttext.load_model("utils/models/lid.176.bin")
 
-    # Only load the CTC model for the requested language
-    CTC_MODELS = {
-        "ca": "stt_ca_conformer_ctc_large",
-        "es": "stt_es_conformer_ctc_large",
-    }
-    primary_model_name = CTC_MODELS[ARGS.lang]
+    # Load the CTC model for the requested language using NFA_MODELS_BY_LANG
+    nfa_type, nfa_id = NFA_MODELS_BY_LANG[ARGS.lang]
 
-    # Check for pre-downloaded local model first
-    local_nemo = Path("utils/models/nemo") / f"{primary_model_name}.nemo"
-    if local_nemo.is_file():
+    if nfa_type == "local":
+        local_nemo = Path(nfa_id)
+        if not local_nemo.is_file():
+            sys.exit(f"❌  Local NFA model not found: {local_nemo}")
         print(f"Loading local NeMo model: {local_nemo}")
         primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
     else:
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(primary_model_name)
+        local_nemo = Path("utils/models/nemo") / f"{nfa_id}.nemo"
+        if local_nemo.is_file():
+            print(f"Loading local NeMo model: {local_nemo}")
+            primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
+        else:
+            print(f"Loading pretrained NeMo model: {nfa_id}")
+            primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(nfa_id)
 
     ca_asr = primary_asr if ARGS.lang == "ca" else None
     es_asr = primary_asr if ARGS.lang == "es" else None
@@ -364,11 +378,8 @@ def main() -> None:
     input_align_dir = align_root / input_id
     input_align_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use local model path for the aligner if available
-    if local_nemo.is_file():
-        aligner_model_arg = f"model_path={local_nemo}"
-    else:
-        aligner_model_arg = f"pretrained_name={primary_model_name}"
+    # Use get_nfa_model_arg for the aligner
+    aligner_model_arg = get_nfa_model_arg(ARGS.lang)
 
     subprocess.run([
         sys.executable,
@@ -438,7 +449,7 @@ def main() -> None:
                     if r.get(key):
                         continue
                     try:
-                        r[key] = transcribe(model, kind, r["segment_path"])
+                        r[key] = transcribe(model, kind, r["segment_path"], lang=lang)
                     except Exception as err:  # noqa: BLE001
                         logging.warning("%s on %s: %s", repo, r["segment_path"], err)
                         r[key] = ""
@@ -451,7 +462,7 @@ def main() -> None:
 
     # 4 ── write JSON
     final_fp = Path("inputs/output_segment") / ARGS.output
-    final_fp.write_text(json.dumps(combined, indent=2, ensure_ascii=False))
+    final_fp.write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"✓  JSON written to {final_fp}  ({time.perf_counter()-start:.1f}s)")
 
 

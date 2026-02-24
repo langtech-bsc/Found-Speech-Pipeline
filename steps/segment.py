@@ -34,7 +34,7 @@ class Segmenter:
 
     def _identify_language(self, text):
         lang_id, _conf = self.lg_model.predict(text, k=1)
-        return lang_id  # e.g. "__label__ca"
+        return lang_id[0]  # e.g. "__label__ca"
 
     # ------------------------------------------------------------------
     # Public API
@@ -58,12 +58,21 @@ class Segmenter:
             lang_label = self._identify_language(normalized_text)
             if lang_label == "__label__ca":
                 model = self.ca_model or self.es_model
-                pred_text = self._asr(model, wav_path)
                 language = "ca"
+            elif lang_label in ("__label__gl", "__label__pt"):
+                model = None  # no inline CTC model for Galician
+                language = "gl"
+            elif lang_label == "__label__eu":
+                model = None  # no inline CTC model for Basque
+                language = "eu"
             else:
                 model = self.es_model or self.ca_model
-                pred_text = self._asr(model, wav_path)
                 language = "es"
+
+            if model is not None:
+                pred_text = self._asr(model, wav_path)
+            else:
+                pred_text = ""  # will be filled by multi-model ASR later
 
             result = {
                 "segment_path": wav_path,
