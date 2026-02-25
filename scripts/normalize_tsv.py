@@ -3,7 +3,7 @@ import sys
 import os
 import pandas as pd
 import csv
-from normalize import clean_text, split_and_clean
+from clean_and_split import split_text, remove_chars
 
 def die(msg=""):
     if msg:
@@ -29,16 +29,10 @@ def main():
                      names=["wav_path", "text"], dtype=str)
 
     # Normalize text column
-    if mark:
-        df["normalized_text"] = df["text"].apply(
-            lambda t: split_and_clean(t, mark, lang)
-        )
-        suffix = "norm_mark"
-    else:
-        df["normalized_text"] = df["text"].apply(
-            lambda t: clean_text(t, lang)
-        )
-        suffix = "norm"
+    df["normalized_text"] = df["text"].apply(
+        lambda t: split_text(remove_chars(t, False, lang), False, mark)
+    )
+    suffix = "norm_mark"
 
     # Build output filename in normalized/ directory
     input_path = os.path.abspath(input_file)
@@ -50,13 +44,9 @@ def main():
 
     out_name = os.path.join(out_dir, f"{base}_{suffix}{ext}")
 
-    # Write wav_path + original text + normalized_text, with quoting to preserve tabs/newlines
+    # Write wav_path + original text + normalized_text
     df[["wav_path", "text", "normalized_text"]].to_csv(
-        out_name,
-        sep="\t",
-        index=False,
-        header=False,
-        quoting=csv.QUOTE_ALL
+        out_name, sep="\t", index=False, header=False, quoting=csv.QUOTE_ALL
     )
     print(f"✔ Normalized TSV written to: {out_name}")
 
