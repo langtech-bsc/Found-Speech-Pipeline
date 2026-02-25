@@ -160,7 +160,7 @@ This creates `fsp-pipeline.sif` (~3–4 GB) from the Docker image. Takes ~5–10
 The `run_singularity.sh` wrapper automatically binds `ingestion/`, `inputs/`, `merged/`, and `utils/models/` into the container.
 
 > [!TIP]
-> Both `run_singularity.sh` and `docker run` commands pass all trailing arguments directly to `pipeline_service.py`. You can append any flag (like `--v2-norm`) to these commands.
+> Both `run_singularity.sh` and `docker run` commands pass all trailing arguments directly to `pipeline_service.py`. You can append any flag (like `--max-duration 60`) to these commands.
 
 ---
 
@@ -211,34 +211,20 @@ The orchestrator (`pipeline_service.py`) runs these steps in order:
 
 | # | Stage | Script | Output |
 |---|---|---|---|
-| 1 | **Normalize TSV** | `scripts/normalize_tsv.py` (or `_v2.py`) | `inputs/normalized/<id>/<id>_norm_mark.tsv` |
+| 1 | **Normalize TSV** | `scripts/normalize_tsv.py` | `inputs/normalized/<id>/<id>_norm_mark.tsv` |
 | 2 | **Normalize audio** | `scripts/normalize_audio.py` | `inputs/normalized/<id>/<id>.wav` (16 kHz mono) |
 | 3 | **Generate final data** | `steps/generate_final_data.py` | Forced alignment → segmentation → per‑language ASR |
-| 4 | **Duration filter** | `scripts/duration_filter.py` | Removes segments < 2 s or > 60 s |
+| 4 | **Duration filter** | `scripts/duration_filter.py` | Removes segments < 2 s or > 30 s |
 | 5 | **ROVER merge** | `scripts/rover_merge.py` | Merged `rover_text` + CER/WER analytics |
 
 ---
 
-## Text Normalization (V1 vs V2)
+## Text Normalization
 
-The pipeline offers two normalization paths. The default (V1) is optimized for standard speech-to-text, while V2 is experimental and more conservative with special characters.
+The pipeline uses a two‑stage text normalization approach:
 
-### V1 Normalization (Standard)
-*   **Script:** `scripts/normalize.py`
-*   **Behavior:** 
-    *   Aggressively strips punctuation and special symbols.
-    *   Expands numbers to words (e.g., "10" → "deu").
-    *   Best for general-purpose ASR where punctuation isn't critical for the ground truth.
-
-### V2 Normalization (Experimental)
-*   **Flag:** Enable with `--v2-norm`
-*   **Script:** `scripts/clean_and_split.py`
-*   **Behavior:**
-    *   Uses a different sentence splitter (`sentence-splitter`).
-    *   **Preserves specialized characters:** Greek letters, math symbols, and currency symbols are kept (mapped via language-specific dictionaries).
-    *   Maintains more robust punctuation mapping.
-    *   **Single-segment behavior:** Unlike V1, V2 normalization currently treats each TSV line as a **single large segment** for the aligner. If your input line is longer than 60s, you must increase the duration filter limit (see Troubleshooting).
-    *   Ideal for technical or scientific transcripts where symbol preservation helps the ASR context.
+1.  **Character cleaning** (`scripts/clean_and_split.py`): Removes invalid characters, handles apostrophes/hyphens contextually, splits text on sentence‑ending punctuation, and preserves specialized characters (Greek letters, math symbols, currency symbols) via language‑specific dictionaries.
+2.  **Expansion** (`scripts/clean_and_expand.py`): Expands abbreviations, acronyms, Roman numerals, and initialisms using syllable‑based heuristics. Converts numbers to words. Produces lowercase, whitespace‑normalized output suitable for ASR ground truth.
 
 ---
 
@@ -327,7 +313,7 @@ The main entry point. Orchestrates all stages.
 |---|---|
 | `--input-id` | Process a single audio‑transcript pair (optional; omit for batch mode) |
 | `--lang` | `ca` or `es` (default: `ca`) |
-| `--v2-norm` | Use experimental V2 text normalization (`normalize_tsv_v2.py`) |
+| `--max-duration` | Maximum segment duration in seconds (default: `30`) |
 
 ### `scripts/download_models.py`
 
@@ -365,7 +351,7 @@ Cleans up segments that are too short or too long.
 |---|---|
 | `json_file` | Path to the metadata JSON (required) |
 | `--min` | Minimum duration in seconds (default: 2) |
-| `--max` | Maximum duration in seconds (default: 30, but **pipeline uses 60 by default**) |
+| `--max` | Maximum duration in seconds (default: 30) |
 
 ### `scripts/rover_merge.py`
 
@@ -403,8 +389,8 @@ sudo swapon /swapfile
 
 **"No segments found / Skipping" in ROVER merge**
 
-If you see a warning that segments are being filtered out, it is usually because the transcript segments are longer than the default 60-second limit.
-*   **Fix:** Edit `pipeline_service.py` and increase the `--max` value in the `Duration filter` stage (e.g., change `"60"` to `"180"`).
+If you see a warning that segments are being filtered out, it is usually because the transcript segments are longer than the default 30-second limit.
+*   **Fix:** Pass `--max-duration 60` (or higher) to `pipeline_service.py` to increase the limit.
 *   **Why?** Very long segments (e.g., > 120s) may cause memory issues or alignment failures with some ASR models.
 
 **Fix 2: Use GPU (If available)**
@@ -461,7 +447,7 @@ free up disk space or set `APPTAINER_TMPDIR` to a partition with ≥ 10 GB free.
 
 ## Notes
 
-- **V2 Normalization**: Passing `--v2-norm` enables an alternative text normalization logic (`clean_and_split.py`). This approach handles punctuation differently and preserves characters such as Greek letters and math symbols for downstream transcription.
+- **Text Normalization**: The pipeline uses `clean_and_split.py` (character cleaning and sentence splitting) followed by `clean_and_expand.py` (abbreviation/number expansion). Both use language‑specific dictionaries to preserve Greek letters, math symbols, and currency signs.
 - **CPU Alignment**: Forced alignment always runs on the CPU. This is a deliberate design choice to prevent out-of-memory errors on the GPU when processing very long recordings.
 - **Resilience**: Batch mode continues processing subsequent files even if an individual recording fails.
 - **Resource Limits**: Ensure ≥ 24 GB effective memory (RAM + swap) before processing.
