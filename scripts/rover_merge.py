@@ -87,8 +87,8 @@ def centroid(hyps: Sequence[str]) -> str:
     return best
 
 # metrics helpers
-def collect_pred_fields(seg: Dict) -> List[str]:
-    return [k for k in seg if k.startswith("pred_") and seg[k]]
+def collect_norm_fields(seg: Dict) -> List[str]:
+    return [k for k in seg if k.startswith("norm_") and seg[k]]
 
 def cer(ref: str, hyp: str) -> float:
     return edist(ref, hyp) / max(len(ref), 1)
@@ -100,24 +100,22 @@ def wer(ref: str, hyp: str) -> float:
 #  per-file processing
 def process_file(path: Path, args) -> Tuple[float, float, int]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    # Discover pred_* fields from any segment (not all have them)
-    pred_fields = args.fields
-    if not pred_fields:
-        for block in data.values():
-            for seg in block["results"]:
-                found = collect_pred_fields(seg)
-                if found:
-                    pred_fields = sorted(found)
-                    break
-            if pred_fields:
-                break
-    if not pred_fields:
-        pred_fields = []
-    print(f"[{path.name}]  merging over ➜ {pred_fields}")
     
-    if not pred_fields:
-        print(f"No pred_* fields found in {path.name}; skipping merge.\n")
-        return 0.0, 0.0, 0.0
+    # Check if there are any results at all
+    all_results = [block["results"] for block in data.values() if "results" in block]
+    flat_results = [r for sublist in all_results for r in sublist]
+    
+    if not flat_results:
+        print(f"[{path.name}]  ⚠ No segments found (filtered out?). Skipping.")
+        return 0.0, 0.0, 0
+
+    any_seg = flat_results[0]
+    norm_fields = args.fields or sorted(collect_norm_fields(any_seg))
+    print(f"[{path.name}]  merging over ➜ {norm_fields}")
+
+    if not norm_fields:
+        print(f"  No norm_text_* fields found in {path.name}; skipping merge.\n")
+        return 0.0, 0.0, 0
 
     rows: List[Dict] = []
     tot_chars = err_ro_c = err_ro_w = 0.0
@@ -130,7 +128,7 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
                 continue
 
             ref = seg["normalized_text"]
-            hyps_raw = [seg.get(f, "") for f in pred_fields]
+            hyps_raw = [seg.get(f, "") for f in norm_fields]
 
             ref_norm = normalise(ref) if args.norm else ref
             hyps = [clean_pred(h) for h in hyps_raw]
@@ -154,7 +152,7 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
             seg["rover_text"] = vote_out
             tot_chars += len(ref_norm)
 
-            for f, h in zip(pred_fields, hyps_norm):
+            for f, h in zip(norm_fields, hyps_norm):
                 err_baseline[f] += cer(ref_norm, h) * len(ref_norm)
             err_ro_c += cer(ref_norm, vote_out) * len(ref_norm)
             err_ro_w += wer(ref_norm, vote_out) * len(ref_norm)
@@ -163,7 +161,7 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
                 rows.append({
                     "segment_path":seg["segment_path"],
                     "normalized_text": ref,
-                    **dict(zip(pred_fields, hyps)),
+                    **dict(zip(norm_fields, hyps)),
                     "rover_text": vote_out,
                 })
 
@@ -176,11 +174,11 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
         pd.DataFrame(rows).to_csv(out_json.with_suffix(".csv"), index=False)
 
     if args.plot and plt and tot_chars:
-        bars = [err_baseline[f] / tot_chars for f in pred_fields] \
+        bars = [err_baseline[f] / tot_chars for f in norm_fields] \
                + [err_ro_c / tot_chars]
         plt.figure(figsize=(max(6, 1.2 * len(bars)), 4))
         plt.bar(range(len(bars)), bars)
-        clean = [re.sub(r"^pred_text_", "", f) for f in pred_fields] + ["ROVER"]
+        clean = [re.sub(r"^norm_text_", "", f) for f in norm_fields] + ["ROVER"]
         plt.xticks(range(len(bars)), clean, rotation=45, ha="right")
         plt.ylabel("Corpus CER")
         plt.title(f"{path.name}  ({','.join(sorted(keep_langs))})")

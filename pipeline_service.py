@@ -60,7 +60,7 @@ def find_valid_input_ids() -> list[str]:
 # Pipeline
 # -------------------------------------------------
 
-def process_existing_paired_input(input_id: str, lang: str) -> None:
+def process_existing_paired_input(input_id: str, lang: str, max_dur: float = 30) -> None:
 
     raw_tsv = INGESTION_DIR / f"{input_id}.tsv"
     raw_wav = INGESTION_DIR / f"{input_id}.wav"
@@ -79,16 +79,15 @@ def process_existing_paired_input(input_id: str, lang: str) -> None:
     run("Ingest single",
         [PY, SCRIPTS_DIR / "normalize_audio.py", f"--input-id={input_id}"])
 
-    # 3️⃣ Forced alignment + ASR scoring
+    # 3️⃣ Generate final data (aligner runs on CPU internally, but ASR can use GPU)
     run("Generate final data",
-        [PY,
-         STEPS_DIR / "generate_final_data.py",
+        [PY, STEPS_DIR / "generate_final_data.py",
          f"--input-id={input_id}", f"--lang={lang}", "--output", out_json_name])
     
 
     # 4️⃣ Duration filter
     run("Duration filter",
-        [PY, SCRIPTS_DIR / "duration_filter.py", out_json_path])
+        [PY, SCRIPTS_DIR / "duration_filter.py", out_json_path, "--max", str(max_dur)])
 
     # 5️⃣ ROVER merge
     run("ROVER merge",
@@ -108,6 +107,8 @@ def main() -> None:
     ap = argparse.ArgumentParser("Run FSP pipeline from existing WAV+TSV")
     ap.add_argument("--input-id", help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)")
     ap.add_argument("--lang", choices=("ca", "es", "eu", "gl"), default="ca")
+    ap.add_argument("--max-duration", type=float, default=30,
+                    help="Maximum segment duration in seconds (default: 30)")
 
     args = ap.parse_args()
 
@@ -123,7 +124,7 @@ def main() -> None:
         print("═" * 70)
 
         try:
-            process_existing_paired_input(args.input_id, args.lang)
+            process_existing_paired_input(args.input_id, args.lang, args.max_duration)
         except Exception as e:
             sys.exit(f"❌ {e}")
 
@@ -139,7 +140,7 @@ def main() -> None:
             print("═" * 70)
 
             try:
-                process_existing_paired_input(input_id, args.lang)
+                process_existing_paired_input(input_id, args.lang, args.max_duration)
             except Exception as e:
                 print(f"❌ Failed: {input_id} → {e}")
                 print("⚠️  Skipping...\n")

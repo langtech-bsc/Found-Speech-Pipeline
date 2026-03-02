@@ -32,6 +32,13 @@ from nemo.collections.asr.models.aed_multitask_models import EncDecMultiTaskMode
 from nemo.collections.asr.models.rnnt_bpe_models import EncDecRNNTBPEModel
 from pyctcdecode import build_ctcdecoder
 from transformers import pipeline as hf_pipeline
+import os
+#current_dir = os.path.dirname(os.path.abspath(__file__))
+#scripts_dir = os.path.join(current_dir, "..", "scripts")
+#sys.path.insert(0, os.path.abspath(scripts_dir))
+#from clean_and_expand import clean_text
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from scripts.clean_and_expand import clean_text
 
 # project local
 from segment import Segmenter
@@ -95,6 +102,7 @@ MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
         ("whisper_large_v3_fallback", "pipe", "openai/whisper-large-v3"),
     ),
     "gl": (
+        ("stt_gl_conformer_ctc_large", "ctc", "utils/models/nfa/stt_gl_conformer_ctc_large.nemo"),
         ("whisper_large_v3_gl", "pipe", "mozilla-ai/whisper-large-v3-gl"),
         # Last-resort fallback (multilingual)
         ("whisper_large_v3_fallback", "pipe", "openai/whisper-large-v3"),
@@ -157,8 +165,12 @@ def load_model(kind: str, repo: str, device: str):
             torch_dtype=dtype,
         )
     if kind == "rnnt":
+        if repo.endswith(".nemo"):
+            return EncDecRNNTBPEModel.restore_from(repo, map_location=device).to(device).eval()
         return EncDecRNNTBPEModel.from_pretrained(repo, map_location=device).to(device).eval()
     if kind == "ctc":
+        if repo.endswith(".nemo"):
+            return nemo_asr.models.EncDecCTCModelBPE.restore_from(repo, map_location=device).to(device).eval()
         return nemo_asr.models.EncDecCTCModelBPE.from_pretrained(repo, map_location=device).to(device).eval()
     if kind == "multi":
         m = EncDecMultiTaskModel.from_pretrained(repo, map_location=device).to(device).eval()
@@ -239,43 +251,6 @@ def choose_language(text: str, lid, conf_delta: float = 0.2) -> Tuple[str, float
     return l1, c1
 
 
-def numbers_to_words(txt: str, tgt_lang: str) -> str:
-    """
-    Replace every integer in *txt* with its cardinal representation
-    in Catalan (tgt_lang == 'cat') or Spanish (tgt_lang == 'spa') using num2words.
-    """
-    lang_map = {"cat": "ca", "spa": "es"}
-    n2w_lang = lang_map.get(tgt_lang, "en")
-
-    def _replace(match: re.Match[str]) -> str:
-        try:
-            return num2words(int(match.group()), lang=n2w_lang)
-        except Exception:
-            return match.group()
-
-    return re.sub(r"\d+", _replace, txt)
-
-
-def clean_text(text: str, label: str) -> str:
-    text = re.sub(r"(\d+)[.,](\d+)", r"\1\2", text)
-    text = re.sub(r"\([^)]*\)", "", text).replace("...", ".")
-    if label == "__label__ca":
-        text = numbers_to_words(text.replace("%", " per cent"), "cat")
-    elif label == "__label__es":
-        text = numbers_to_words(text.replace("%", " por ciento"), "spa")
-    elif label == "__label__eu":
-        # Basque: skip numbers_to_words() — the upstream modulo1y2 normalizer
-        # (in normalize.py / norm_eu.py) already converts numbers to words
-        pass
-    elif label == "__label__gl":
-        # Galician: skip numbers_to_words() — the upstream Cotovia normalizer
-        # (in normalize.py / norm_gl.py) already converts numbers to words
-        pass
-
-    forbidden = set(",;:?¿«»-¡!@*{}[]=/\\&#…")
-    text = "".join(ch if ch not in forbidden else " " for ch in text)
-    return " ".join(text.split()).lower()
-
 
 def build_manifest(meta_path: Path, lid_model) -> Path:
     """Return a NeMo manifest."""
@@ -307,7 +282,7 @@ def build_manifest(meta_path: Path, lid_model) -> Path:
             continue
 
         lang, conf = choose_language(src_norm, lid_model)
-        cleaned_normalized = clean_text(src_norm, f"__label__{lang}")
+        cleaned_normalized = clean_text(src_norm, lang, False, False)
 
         entries.append({
             "audio_filepath": str(wav.resolve()),
@@ -390,7 +365,7 @@ def main() -> None:
         "align_using_pred_text=false",
         "transcribe_device=cpu",
         "viterbi_device=cpu",
-        "additional_segment_grouping_separator=.",
+        "additional_segment_grouping_separator=|",
         "hydra.run.dir=.",
     ], check=True)
 
@@ -446,12 +421,22 @@ def main() -> None:
                 print(f"Model {name} loaded on device {device}")
                 for r in segs:
                     key = f"pred_text_{name}"
+                    norm_key = f"norm_text_{name}"
+                    transcription = ""
                     if r.get(key):
                         continue
                     try:
-                        r[key] = transcribe(model, kind, r["segment_path"], lang=lang)
+                        transcription = transcribe(model, kind, r["segment_path"], lang=lang)
+                        r[key] = transcription
                     except Exception as err:  # noqa: BLE001
-                        logging.warning("%s on %s: %s", repo, r["segment_path"], err)
+                        logging.warning("%s on %s: %s",
+                                        repo, r["segment_path"], err)
+                        r[key] = ""
+                    try:
+                        r[norm_key] = clean_text(transcription, lang, False, False)
+                    except Exception as err:  # noqa: BLE001
+                        logging.warning("[norm_script:] %s on %s: %s",
+                                        repo, r["segment_path"], err)
                         r[key] = ""
             except Exception as err:  # noqa: BLE001
                 logging.warning("Could not load model %s (%s): %s — skipping",
