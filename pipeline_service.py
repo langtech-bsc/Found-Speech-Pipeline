@@ -73,7 +73,7 @@ def process_existing_paired_input(input_id: str, lang: str, max_dur: float = 30)
     
     # 1️⃣ Normalize TSV
     run("Normalise TSV",
-        [PY, SCRIPTS_DIR / "normalize_tsv.py", raw_tsv, lang, ". "])
+        [PY, SCRIPTS_DIR / "normalize_tsv.py", raw_tsv, lang, "|"])
 
     # 2️⃣ Normalize audio + metadata 
     run("Ingest single",

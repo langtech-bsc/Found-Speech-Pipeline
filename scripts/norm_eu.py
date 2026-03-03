@@ -68,7 +68,7 @@ def normalize_eu(text: str) -> str:
         )
         
         result = decoded.stdout.decode('utf-8').strip()
-        return result if result else _basic_normalize(text)
+        return result.lower() if result else _basic_normalize(text)
         
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         # Fallback to basic normalization on error

@@ -20,8 +20,12 @@ import re
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+# Suppress the irritating expected warning from using HuggingFace pipelines sequentially
+warnings.filterwarnings("ignore", category=UserWarning, module="transformers.pipelines.base")
 
 # third-party libs
 import fasttext
@@ -301,6 +305,7 @@ def build_manifest(meta_path: Path, lid_model) -> Path:
     return manifest_fp
 
 def main() -> None:
+    print("Starting main", flush=True)
     global ARGS
     ARGS = parse_args()
     if not ARGS.output:
@@ -452,6 +457,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    print("Starting script", flush=True)
     try:
         main()
     except Exception as e:  # noqa: BLE001

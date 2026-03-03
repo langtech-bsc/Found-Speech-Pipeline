@@ -99,9 +99,10 @@ def clean_apostrophes(input_text):
     return re.sub(r'(?<=\w)\'(?!\w)', "’", re.sub(r'(?<!\w)\'(?=\w)', "‘", re.sub(r'(?<=\w)’(?=\w)', "'", input_text)))
 
 def clean_text(input_text, lang, punctuation, capitalisation):
-    if lang == "ca":
-        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    # Ensure project root is on sys.path so `from scripts.*` imports work
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+    if lang == "ca":
         from scripts.norm_dicts_ca_v2 import ordinals, currency, phisics_and_maths, greek_letters, letters
         from scripts.norm_dicts_ca_v2 import abr_dict, roman_nums, acronyms_dict, dots_and_commas
         from scripts.norm_dicts_ca_v2 import onset, coda
@@ -113,8 +114,11 @@ def clean_text(input_text, lang, punctuation, capitalisation):
     elif lang == "eu":
         # Basque: modulo1y2 binary handles num2words, ordinals, abbreviations
         from scripts.norm_eu import normalize_eu
-        input_text = normalize_eu(input_text)
-        accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -"
+        if "|" in input_text:
+            input_text = "|".join(normalize_eu(c) for c in input_text.split("|"))
+        else:
+            input_text = normalize_eu(input_text)
+        accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -|"
         if punctuation:
             accepted_chars += ",()¡¿\"«»\u201c\u201d\u2018\u2019;.?!:\u2026"
         if capitalisation:
@@ -125,8 +129,11 @@ def clean_text(input_text, lang, punctuation, capitalisation):
     elif lang == "gl":
         # Galician: Cotovia binary handles num2words, ordinals, abbreviations
         from scripts.norm_gl import normalize_gl
-        input_text = normalize_gl(input_text)
-        accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -"
+        if "|" in input_text:
+            input_text = "|".join(normalize_gl(c) for c in input_text.split("|"))
+        else:
+            input_text = normalize_gl(input_text)
+        accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -|"
         if punctuation:
             accepted_chars += ",()¡¿\"«»\u201c\u201d\u2018\u2019;.?!:\u2026"
         if capitalisation:
@@ -151,7 +158,7 @@ def clean_text(input_text, lang, punctuation, capitalisation):
     if any(i.isdigit() for i in str(expanded_text)):
         expanded_text = numbers_to_chars(clean_numbers(expanded_text, dots_and_commas), lang)
 
-    accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -"
+    accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -|"
     if punctuation==True:
         accepted_chars+= ",()¡¿\"«»“”‘’;.?!:…"
     if capitalisation==True:

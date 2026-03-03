@@ -109,8 +109,7 @@ def process_file(path: Path, args) -> Tuple[float, float, int]:
         print(f"[{path.name}]  ⚠ No segments found (filtered out?). Skipping.")
         return 0.0, 0.0, 0
 
-    any_seg = flat_results[0]
-    norm_fields = args.fields or sorted(collect_norm_fields(any_seg))
+    norm_fields = args.fields or sorted(list(set(k for r in flat_results for k in r if k.startswith("norm_") and r[k])))
     print(f"[{path.name}]  merging over ➜ {norm_fields}")
 
     if not norm_fields:

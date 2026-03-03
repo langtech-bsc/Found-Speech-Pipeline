@@ -4,11 +4,12 @@ import os
 import pandas as pd
 import csv
 from clean_and_split import split_text, remove_chars
+from clean_and_expand import clean_text
 
 def die(msg=""):
     if msg:
         sys.stderr.write("Error: " + msg + "\n")
-    sys.stderr.write(f"Usage: python3 {os.path.basename(__file__)} <input_tsv> <lang:ca|es> [mark]\n")
+    sys.stderr.write(f"Usage: python3 {os.path.basename(__file__)} <input_tsv> <lang:ca|es|eu|gl> [mark]\n")
     sys.exit(1)
 
 def main():
@@ -28,10 +29,20 @@ def main():
     df = pd.read_csv(input_file, sep="\t", header=None,
                      names=["wav_path", "text"], dtype=str)
 
+    def normalize_row(t, lang, mark):
+        # Pre-process text to standardize end of sentences
+        t = t.replace("\n", ".").replace(" - ", ".").replace(" · ", ".").replace("|", ".")
+        # First use V1's sentence splitting which carefully handles abbreviation dots
+        split_str = split_text(remove_chars(t, False, lang), False, mark)
+        # Then apply V2's clean_text to each segment
+        if not split_str:
+            return ""
+        if not mark:
+            return clean_text(split_str.strip(), lang, False, False)
+        return mark.join([clean_text(s.strip(), lang, False, False) for s in split_str.split(mark) if s.strip()])
+
     # Normalize text column
-    df["normalized_text"] = df["text"].apply(
-        lambda t: split_text(remove_chars(t, False, lang), False, mark)
-    )
+    df["normalized_text"] = df["text"].apply(lambda t: normalize_row(t, lang, mark))
     suffix = "norm_mark"
 
     # Build output filename in normalized/ directory
