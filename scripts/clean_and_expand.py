@@ -103,14 +103,14 @@ def clean_text(input_text, lang, punctuation, capitalisation):
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
     if lang == "ca":
-        from scripts.norm_dicts_ca_v2 import ordinals, currency, phisics_and_maths, greek_letters, letters
-        from scripts.norm_dicts_ca_v2 import abr_dict, roman_nums, acronyms_dict, dots_and_commas
-        from scripts.norm_dicts_ca_v2 import onset, coda
+        from scripts.norm_dicts_ca import ordinals, currency, phisics_and_maths, greek_letters, letters
+        from scripts.norm_dicts_ca import abr_dict, roman_nums, acronyms_dict, dots_and_commas
+        from scripts.norm_dicts_ca import onset, coda
     elif lang == "es":
-        from scripts.norm_dicts_es_v2 import ordinals, currency, phisics_and_maths, greek_letters, letters
-        from scripts.norm_dicts_es_v2 import abr_dict, roman_nums, acronyms_dict, dots_and_commas
+        from scripts.norm_dicts_es import ordinals, currency, phisics_and_maths, greek_letters, letters
+        from scripts.norm_dicts_es import abr_dict, roman_nums, acronyms_dict, dots_and_commas
 
-        from scripts.norm_dicts_es_v2 import onset, coda
+        from scripts.norm_dicts_es import onset, coda
     elif lang == "eu":
         # Basque: modulo1y2 binary handles num2words, ordinals, abbreviations
         from scripts.norm_eu import normalize_eu
