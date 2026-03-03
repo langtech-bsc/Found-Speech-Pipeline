@@ -228,19 +228,40 @@ def hhmmss_to_sec(t: str | int | float) -> float:
         return float(t)
 
 
-def choose_language(text: str, lid, conf_delta: float = 0.2) -> Tuple[str, float]:
+def choose_language(text: str, lid, conf_delta: float = 0.2,
+                    pri_lang: str | None = None) -> Tuple[str, float]:
     """FastText-based language choice for ca/es/eu/gl."""
-    labels, confs = lid.predict(text, k=2)
-    l1, c1 = labels[0].replace("__label__", ""), float(confs[0])
-    l2, c2 = labels[1].replace("__label__", ""), float(confs[1])
+    
+    SUPPORTED = {"ca", "es", "eu", "gl"}
+
+    labels3, confs3 = lid.predict(text, k=3)
+    langs3 = [x.replace("__label__", "") for x in labels3]
+    confs3 = [float(x) for x in confs3]
+
+    l1, c1 = langs3[0], confs3[0]
+    l2, c2 = langs3[1], confs3[1]
+
+    # ── Priority: if the expected pipeline language appears in top-3 and
+    #    top-1 is an unsupported language with low confidence, prefer pri_lang.
+    if (
+        pri_lang in SUPPORTED
+        and l1 not in SUPPORTED
+        and c1 < 0.5 
+        and pri_lang in langs3
+    ):
+        idx = langs3.index(pri_lang)
+        return pri_lang, confs3[idx]
 
     # Basque (Euskara)
     if l1 == "eu":
         return "eu", c1
 
+    if l1 == "es" and l2 == "eu" and (c1 - c2) < conf_delta:
+        return "eu", c2
+
     # Galician
     if l1 == "gl": return "gl", c1
-    if l1 == "pt" and l2 == "gl"  and (c1 - c2) < conf_delta: return "gl", c2
+    if l1 == "pt" and l2 == "gl" and (c1 - c2) < conf_delta: return "gl", c2
 
     # Catalan / Spanish disambiguation
     if l1 == "ca":
@@ -285,7 +306,7 @@ def build_manifest(meta_path: Path, lid_model) -> Path:
         if not src_org.strip():
             continue
 
-        lang, conf = choose_language(src_norm, lid_model)
+        lang, conf = choose_language(src_norm, lid_model, pri_lang=ARGS.lang)
         cleaned_normalized = clean_text(src_norm, lang, False, False)
 
         entries.append({
@@ -402,7 +423,7 @@ def main() -> None:
             for k in LEGACY_KEYS:
                 r.pop(k, None)
 
-            lang, conf = choose_language(r["normalized_text"], lid_model)
+            lang, conf = choose_language(r["normalized_text"], lid_model, pri_lang=ARGS.lang)
             if lang not in ("ca", "es", "eu", "gl"): continue
             r["language"] = lang
             r["language_confidence"] = round(conf, 2)
