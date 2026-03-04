@@ -1,0 +1,167 @@
+"""
+Audio segmentation class.
+
+This module contains the Segmenter class migrated from:
+- steps/segment.py
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from typing import TYPE_CHECKING, Any, Dict, List
+
+import pandas as pd
+import soundfile as sf
+from jiwer import cer
+
+if TYPE_CHECKING:
+    import fasttext
+
+
+class Segmenter:
+    """Cut aligned blocks into word-level segments, run ASR + LM, score CER."""
+
+    MIN_DUR = 0.25  # seconds – segments shorter than this are skipped
+
+    def __init__(
+        self,
+        alignment_file: str,
+        audio_file: str,
+        out_path: str,
+        lg_model: "fasttext.FastText._FastText",
+        ca_model: Any,
+        es_model: Any,
+    ):
+        """
+        Initialize the Segmenter.
+
+        Args:
+            alignment_file: Path to CTM alignment file
+            audio_file: Path to source audio file
+            out_path: Output directory for segments
+            lg_model: FastText language identification model
+            ca_model: Catalan ASR model
+            es_model: Spanish ASR model
+        """
+        if not (os.path.isfile(alignment_file) and os.path.isfile(audio_file)):
+            raise IOError(
+                f"audio file or alignment file doesn't exist:\n  {audio_file}\n  {alignment_file}"
+            )
+
+        self.audio_file = audio_file
+        self.alignment = pd.read_csv(
+            alignment_file, sep=" ", names=["file", "nb", "start", "duration", "text"]
+        )
+        self.out_path = out_path
+        self.lg_model = lg_model
+        self.ca_model = ca_model
+        self.es_model = es_model
+        os.makedirs(out_path, exist_ok=True)
+
+    def _asr(self, model: Any, wav: str) -> str:
+        """Plain CTC decode."""
+        return model.transcribe(paths2audio_files=[wav], batch_size=1)[0]
+
+    def _identify_language(self, text: str) -> str:
+        """Identify language of text."""
+        lang_id, _conf = self.lg_model.predict(text, k=1)
+        return lang_id  # e.g. "__label__ca"
+
+    def segment_audio(self) -> List[Dict[str, Any]]:
+        """
+        Segment audio based on alignment and run ASR.
+
+        Returns:
+            List of segment dictionaries containing paths, timestamps,
+            language, text, predictions, and CER scores.
+        """
+        results = []
+        base_name = os.path.splitext(os.path.basename(self.audio_file))[0]
+
+        for _, row in self.alignment.iterrows():
+            start, dur = row["start"], row["duration"]
+            if dur < self.MIN_DUR:
+                continue  # skip ultra-short segments
+
+            end = start + dur
+            normalized_text = row["text"].replace("<space>", " ")
+
+            wav_path = self._segment_cue(start, end, base_name, dur)
+            if wav_path is None:  # ffmpeg produced an empty file → skip
+                continue
+
+            lang_label = self._identify_language(normalized_text)
+            if lang_label == "__label__ca":
+                model = self.ca_model or self.es_model
+                pred_text = self._asr(model, wav_path)
+                language = "ca"
+            else:
+                model = self.es_model or self.ca_model
+                pred_text = self._asr(model, wav_path)
+                language = "es"
+
+            result = {
+                "segment_path": wav_path,
+                "start": start,
+                "end": end,
+                "language": language,
+                "normalized_text": normalized_text,
+                "pred_text": pred_text,
+                "cer_score": cer(normalized_text, pred_text),
+            }
+            results.append(result)
+
+        return results
+
+    def _segment_cue(self, start: float, end: float, base_name: str, duration: float) -> str | None:
+        """
+        Cut a segment from the audio file using ffmpeg.
+
+        Args:
+            start: Start time in seconds
+            end: End time in seconds
+            base_name: Base name for output file
+            duration: Duration in seconds
+
+        Returns:
+            Path to the output wav file, or None if failed
+        """
+        file_name = f"{base_name}_{start}_{end}.wav"
+        out_file = os.path.join(self.out_path, file_name)
+
+        if os.path.isfile(out_file):
+            print(f"{out_file} already exists – skipping")
+        else:
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                self.audio_file,
+                "-ss",
+                str(start),
+                "-t",
+                str(duration),
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                out_file,
+            ]
+            subprocess.call(cmd)
+
+        # Validate the produced file
+        if not os.path.isfile(out_file):
+            print(f"ffmpeg failed for {out_file}")
+            return None
+        info = sf.info(out_file)
+        if info.frames == 0:
+            os.remove(out_file)  # clean up
+            return None
+        return out_file
+
+
+__all__ = ["Segmenter"]
