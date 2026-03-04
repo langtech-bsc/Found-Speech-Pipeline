@@ -1,33 +1,15 @@
-import os
-import pandas as pd
-from jiwer import cer
-import soundfile as sf
-import subprocess
+"""
+segment.py
+==========
+Audio segmentation module.
 
+This is a backwards-compatible wrapper that re-exports Segmenter from fsp.core.segmenter.
+"""
 
-class Segmenter:
-    """Cut aligned blocks into word‑level segments, run ASR + LM, score CER."""
+# Re-export Segmenter from fsp.core for backwards compatibility
+from fsp.core.segmenter import Segmenter
 
-    MIN_DUR = 0.25  # seconds – segments shorter than this are skipped
-
-    def __init__(self, alignment_file, audio_file, out_path,
-                 lg_model, ca_model, es_model):
-        if not (os.path.isfile(alignment_file) and os.path.isfile(audio_file)):
-            raise IOError(
-                f"audio file or alignment file doesn't exist:\n  {audio_file}\n  {alignment_file}")
-
-        self.audio_file = audio_file
-        self.alignment = pd.read_csv(
-            alignment_file, sep=" ", names=["file", "nb", "start", "duration", "text"])
-        self.out_path = out_path
-        self.lg_model = lg_model
-        self.ca_model = ca_model
-        self.es_model = es_model
-        os.makedirs(out_path, exist_ok=True)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+__all__ = ["Segmenter"]
     def _asr(self, model, wav):
         """Plain CTC decode."""
         return model.transcribe(paths2audio_files=[wav], batch_size=1)[0]
