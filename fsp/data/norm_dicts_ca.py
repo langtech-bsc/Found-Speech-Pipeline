@@ -49,7 +49,7 @@ dots_and_commas = {
     ".": "punt",
     ",": "coma",
 }
-phisics_and_maths = {
+physics_and_maths = {
     "°": "graus",
     "+": "més",
     "=": "igual a",
