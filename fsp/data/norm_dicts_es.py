@@ -55,7 +55,7 @@ dots_and_commas = {
     ".": "punto",
     ",": "coma",
 }
-phisics_and_maths = {
+physics_and_maths = {
     "°": "grados",
     "+": "más",
     "=": "igual a",

@@ -140,7 +140,7 @@ def clean_text(input_text: str, lang: str, punctuation: bool, capitalisation: bo
             letters,
             onset,
             ordinals,
-            phisics_and_maths,
+            physics_and_maths,
             roman_nums,
         )
     elif lang == "es":
@@ -154,13 +154,13 @@ def clean_text(input_text: str, lang: str, punctuation: bool, capitalisation: bo
             letters,
             onset,
             ordinals,
-            phisics_and_maths,
+            physics_and_maths,
             roman_nums,
         )
     else:
         raise ValueError(f"Language not supported: {lang}")
 
-    special_chars = greek_letters | phisics_and_maths | currency
+    special_chars = greek_letters | physics_and_maths | currency
     abreviations = abr_dict | acronyms_dict | ordinals
 
     if any(i in special_chars.keys() for i in str(input_text)):
@@ -225,9 +225,9 @@ _general_abreviations = [
 def get_valid_chars(lang: str = "ca") -> str:
     """Get valid characters for the given language."""
     if lang == "ca":
-        from fsp.data.norm_dicts_ca import currency, greek_letters, phisics_and_maths
+        from fsp.data.norm_dicts_ca import currency, greek_letters, physics_and_maths
     else:
-        from fsp.data.norm_dicts_es import currency, greek_letters, phisics_and_maths
+        from fsp.data.norm_dicts_es import currency, greek_letters, physics_and_maths
 
     return (
         _letters
@@ -235,7 +235,7 @@ def get_valid_chars(lang: str = "ca") -> str:
         + _numeric_chars
         + _end_of_sent_chars
         + "".join(currency.keys())
-        + "".join(phisics_and_maths.keys())
+        + "".join(physics_and_maths.keys())
         + "".join(greek_letters.keys())
     )
 
