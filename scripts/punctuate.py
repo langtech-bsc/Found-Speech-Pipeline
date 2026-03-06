@@ -3,9 +3,17 @@
 import argparse
 import json
 import logging
+import os
 import sys
 import warnings
 from pathlib import Path
+
+# ── Point HuggingFace cache at the shared GPFS models directory ─────────
+MODELS_ROOT = "/gpfs/projects/bsc88/speech/ASR/models"
+os.environ.setdefault("HF_HOME", f"{MODELS_ROOT}/huggingface")
+# Enforce fully-offline operation — never download anything
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 # Suppress warning from using HuggingFace pipelines sequentially
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.pipelines.base")

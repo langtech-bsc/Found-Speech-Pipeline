@@ -37,6 +37,14 @@ from nemo.collections.asr.models.rnnt_bpe_models import EncDecRNNTBPEModel
 from pyctcdecode import build_ctcdecoder
 from transformers import pipeline as hf_pipeline
 import os
+
+# ── Point model‑caches at the shared GPFS models directory ──────────────
+MODELS_ROOT = "/gpfs/projects/bsc88/speech/ASR/models"
+os.environ.setdefault("HF_HOME", f"{MODELS_ROOT}/huggingface")
+os.environ.setdefault("NEMO_CACHE_DIR", f"{MODELS_ROOT}/nemo")
+# Enforce fully-offline operation — never download anything
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 #current_dir = os.path.dirname(os.path.abspath(__file__))
 #scripts_dir = os.path.join(current_dir, "..", "scripts")
 #sys.path.insert(0, os.path.abspath(scripts_dir))
@@ -79,48 +87,46 @@ if __name__ == "__main__" or "pytest" not in sys.modules:
         pass
 
 
-# model catalogue
+# model catalogue — all paths are local directories in GPFS
 MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
     "ca": (
-        ("whisper_ca_3catparla", "pipe", "projecte-aina/whisper-large-v3-ca-3catparla"),
-        ("whisper_bsc_cat", "pipe", "langtech-veu/whisper-bsc-large-v3-cat"),
-        ("whisper_ca_punct_3370h", "pipe", "langtech-veu/whisper-large-v3-ca-punctuated-3370h"),
-        ("stt_ca_es_conformer_transducer_large", "rnnt", "projecte-aina/stt_ca-es_conformer_transducer_large"),
+        ("whisper_ca_3catparla", "pipe", f"{MODELS_ROOT}/whisper-large-v3-ca-3catparla"),
+        ("whisper_bsc_cat", "pipe", f"{MODELS_ROOT}/Whisper-bsc-large-v3-cat"),
+        ("whisper_ca_punct_3370h", "pipe", f"{MODELS_ROOT}/whisper-large-v3-ca-punctuated-3370h"),
+        ("stt_ca_es_conformer_transducer_large", "rnnt", f"{MODELS_ROOT}/stt_ca-es_conformer_transducer_large"),
     ),
     "es": (
-        ("parakeet_rnnt_es", "rnnt", "projecte-aina/parakeet-rnnt-1.1b_cv17_es_ep18_1270h"),
-        ("stt_es_conformer_transducer_large", "rnnt", "nvidia/stt_es_conformer_transducer_large"),
-        ("whisper_large_v3", "pipe", "openai/whisper-large-v3"),
+        ("parakeet_rnnt_es", "rnnt", f"{MODELS_ROOT}/parakeet-rnnt-1.1b_cv17_es_ep18_1270h"),
+        ("stt_es_conformer_transducer_large", "rnnt", f"{MODELS_ROOT}/stt_es_conformer_transducer_large"),
+        ("whisper_large_v3", "pipe", f"{MODELS_ROOT}/whisper-large-v3"),
     ),
     "eu": (
-        ("stt_eu_conformer_transducer_large", "rnnt", "HiTZ/stt_eu_conformer_transducer_large"),
-        ("stt_eu_conformer_ctc_large", "ctc", "HiTZ/stt_eu_conformer_ctc_large"),
-        ("whisper_tiny_eu", "pipe", "HiTZ/whisper-tiny-eu"),
-        ("whisper_small_eu", "pipe", "HiTZ/whisper-small-eu"),
-        ("whisper_base_eu", "pipe", "HiTZ/whisper-base-eu"),
-        ("whisper_medium_eu", "pipe", "HiTZ/whisper-medium-eu"),
-        ("whisper_large_eu", "pipe", "HiTZ/whisper-large-eu"),
-        ("whisper_large_v2_eu", "pipe", "HiTZ/whisper-large-v2-eu"),
-        ("whisper_large_v3_eu", "pipe", "HiTZ/whisper-large-v3-eu"),
+        ("stt_eu_conformer_transducer_large", "rnnt", f"{MODELS_ROOT}/stt_eu_conformer_transducer_large"),
+        ("stt_eu_conformer_ctc_large", "ctc", f"{MODELS_ROOT}/stt_eu_conformer_ctc_large"),
+        ("whisper_tiny_eu", "pipe", f"{MODELS_ROOT}/whisper-tiny-eu"),
+        ("whisper_small_eu", "pipe", f"{MODELS_ROOT}/whisper-small-eu"),
+        ("whisper_base_eu", "pipe", f"{MODELS_ROOT}/whisper-base-eu"),
+        ("whisper_medium_eu", "pipe", f"{MODELS_ROOT}/whisper-medium-eu"),
+        ("whisper_large_eu", "pipe", f"{MODELS_ROOT}/whisper-large-eu"),
+        ("whisper_large_v2_eu", "pipe", f"{MODELS_ROOT}/whisper-large-v2-eu"),
+        ("whisper_large_v3_eu", "pipe", f"{MODELS_ROOT}/whisper-large-v3-eu"),
         # Last-resort fallback (multilingual)
-        ("whisper_large_v3_fallback", "pipe", "openai/whisper-large-v3"),
+        ("whisper_large_v3_fallback", "pipe", f"{MODELS_ROOT}/whisper-large-v3"),
     ),
     "gl": (
-        ("stt_gl_conformer_ctc_large", "ctc", "utils/models/nfa/stt_gl_conformer_ctc_large.nemo"),
-        ("whisper_large_v3_gl", "pipe", "mozilla-ai/whisper-large-v3-gl"),
+        ("stt_gl_conformer_ctc_large", "ctc", f"{MODELS_ROOT}/stt_gl_conformer_ctc_large"),
+        ("whisper_large_v3_gl", "pipe", f"{MODELS_ROOT}/whisper-large-v3-gl"),
         # Last-resort fallback (multilingual)
-        ("whisper_large_v3_fallback", "pipe", "openai/whisper-large-v3"),
+        ("whisper_large_v3_fallback", "pipe", f"{MODELS_ROOT}/whisper-large-v3"),
     ),
 }
 
-# NFA (NeMo Forced Aligner) models by language
-# Use pretrained_name for HuggingFace models, model_path for local .nemo files
+# NFA (NeMo Forced Aligner) models by language — all local
 NFA_MODELS_BY_LANG: Dict[str, Tuple[str, str]] = {
-    # (type, model_identifier) - type is "pretrained" or "local"
-    "ca": ("pretrained", "stt_ca_conformer_ctc_large"),
-    "es": ("pretrained", "stt_es_conformer_ctc_large"),
-    "eu": ("local", "utils/models/nfa/eu/stt_eu_conformer_ctc_large.nemo"),
-    "gl": ("local", "utils/models/nfa/stt_gl_conformer_ctc_large.nemo"),  # Repackaged .nemo file
+    "ca": ("local", f"{MODELS_ROOT}/stt_ca_conformer_ctc_large"),
+    "es": ("local", f"{MODELS_ROOT}/stt_es_conformer_ctc_large"),
+    "eu": ("local", f"{MODELS_ROOT}/stt_eu_conformer_ctc_large"),
+    "gl": ("local", f"{MODELS_ROOT}/stt_gl_conformer_ctc_large"),
 }
 
 
@@ -129,13 +135,28 @@ def get_nfa_model_arg(lang: str) -> str:
     if lang not in NFA_MODELS_BY_LANG:
         # Default to Catalan for unknown languages
         lang = "ca"
-    model_type, model_id = NFA_MODELS_BY_LANG[lang]
-    if model_type == "pretrained":
-        return f"pretrained_name={model_id}"
-    return f"model_path={model_id}"
+    _model_type, model_id = NFA_MODELS_BY_LANG[lang]
+    nemo = _find_nemo_file(model_id)
+    if nemo:
+        return f"model_path={nemo}"
+    # Directory without .nemo — try as pretrained name (from offline cache)
+    return f"pretrained_name={Path(model_id).name}"
 
 
 LEGACY_KEYS = {"pred_text", "cer_score"}
+
+
+def _find_nemo_file(path: str) -> str | None:
+    """If *path* is (or contains) a .nemo file, return its absolute path."""
+    p = Path(path)
+    if p.is_file() and p.suffix == ".nemo":
+        return str(p)
+    if p.is_dir():
+        nemo_files = sorted(p.glob("*.nemo"))
+        if nemo_files:
+            return str(nemo_files[0])
+    return None
+
 
 # helper functions
 def _clean_singleton_json_array(txt: str) -> str:
@@ -159,7 +180,7 @@ def _clean_singleton_json_array(txt: str) -> str:
 
 
 def load_model(kind: str, repo: str, device: str):
-    """Load one ASR model (no global cache so RSS stays small)."""
+    """Load one ASR model from a local path (no downloading)."""
     if kind == "pipe":
         dtype = torch.float16 if device.startswith("cuda") else torch.float32
         return hf_pipeline(
@@ -169,12 +190,15 @@ def load_model(kind: str, repo: str, device: str):
             torch_dtype=dtype,
         )
     if kind == "rnnt":
-        if repo.endswith(".nemo"):
-            return EncDecRNNTBPEModel.restore_from(repo, map_location=device).to(device).eval()
+        nemo = _find_nemo_file(repo)
+        if nemo:
+            return EncDecRNNTBPEModel.restore_from(nemo, map_location=device).to(device).eval()
+        # local HF-format dir or pretrained name (offline cache)
         return EncDecRNNTBPEModel.from_pretrained(repo, map_location=device).to(device).eval()
     if kind == "ctc":
-        if repo.endswith(".nemo"):
-            return nemo_asr.models.EncDecCTCModelBPE.restore_from(repo, map_location=device).to(device).eval()
+        nemo = _find_nemo_file(repo)
+        if nemo:
+            return nemo_asr.models.EncDecCTCModelBPE.restore_from(nemo, map_location=device).to(device).eval()
         return nemo_asr.models.EncDecCTCModelBPE.from_pretrained(repo, map_location=device).to(device).eval()
     if kind == "multi":
         m = EncDecMultiTaskModel.from_pretrained(repo, map_location=device).to(device).eval()
@@ -335,25 +359,21 @@ def main() -> None:
     start = time.perf_counter()
 
     # Static resources
-    lid_model = fasttext.load_model("utils/models/lid.176.bin")
+    lid_model = fasttext.load_model(f"{MODELS_ROOT}/fasttext/lid.176.bin")
 
     # Load the CTC model for the requested language using NFA_MODELS_BY_LANG
-    nfa_type, nfa_id = NFA_MODELS_BY_LANG[ARGS.lang]
+    _nfa_type, nfa_id = NFA_MODELS_BY_LANG[ARGS.lang]
+    nfa_path = Path(nfa_id)
 
-    if nfa_type == "local":
-        local_nemo = Path(nfa_id)
-        if not local_nemo.is_file():
-            sys.exit(f"❌  Local NFA model not found: {local_nemo}")
-        print(f"Loading local NeMo model: {local_nemo}")
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
+    nemo_file = _find_nemo_file(str(nfa_path))
+    if nemo_file:
+        print(f"Loading local NeMo model: {nemo_file}")
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(nemo_file)
+    elif nfa_path.is_dir():
+        print(f"Loading NeMo model from directory: {nfa_path}")
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(nfa_path))
     else:
-        local_nemo = Path("utils/models/nemo") / f"{nfa_id}.nemo"
-        if local_nemo.is_file():
-            print(f"Loading local NeMo model: {local_nemo}")
-            primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
-        else:
-            print(f"Loading pretrained NeMo model: {nfa_id}")
-            primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(nfa_id)
+        sys.exit(f"❌  NFA model not found: {nfa_path}")
 
     ca_asr = primary_asr if ARGS.lang == "ca" else None
     es_asr = primary_asr if ARGS.lang == "es" else None
