@@ -88,7 +88,7 @@ class Segmenter:
             normalized_text = row["text"].replace("<space>", " ")
 
             wav_path = self._segment_cue(start, end, base_name, dur)
-            if wav_path is None:  # ffmpeg produced an empty file → skip
+            if wav_path is None:  # ffmpeg produced an empty file; skip it
                 continue
 
             lang_label = self._identify_language(normalized_text)

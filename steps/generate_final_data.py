@@ -6,8 +6,8 @@ Forced alignment + ASR enrichment for **one** audio-transcript pair.
 
 CLI wrapper for fsp.core.alignment.generate_final_data
 
-• Segments are language-detected first.
-• For each language we load *one* model at a time → transcribe → unload.
+- Segments are language-detected first.
+- For each language we load one model at a time -> transcribe -> unload.
 """
 
 from __future__ import annotations
@@ -17,9 +17,11 @@ import logging
 import sys
 from pathlib import Path
 
+from fsp.utils.paths import (HF_MODEL_DIR_ENV_VAR, LID_MODEL_PATH_ENV_VAR,
+                             LOG_DIR, NEMO_MODEL_DIR_ENV_VAR)
+
 # Setup logging
-LOG_DIR = Path("inputs")
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     filename=LOG_DIR / "output.log",
     level=logging.INFO,
@@ -28,15 +30,43 @@ logging.basicConfig(
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser("Generate word-level aligned JSON (one input-id)")
-    p.add_argument("--input-id", required=True,
-                   help="YouTube video-id to process")
-    p.add_argument("--lang", choices=("ca", "es"), default="ca",
-                   help="Primary language (only its CTC model is loaded)")
-    p.add_argument("--output", metavar="NAME.json",
-                   help="Custom JSON name (default: final_output_<input-id>.json)")
-    p.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto",
-                   help="Run ASR on cuda / cpu (default auto)")
+    p = argparse.ArgumentParser(
+        "Generate word-level aligned JSON (one input-id)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("--input-id", required=True, help="YouTube video-id to process")
+    p.add_argument(
+        "--lang",
+        choices=("ca", "es"),
+        default="ca",
+        help="Primary language (only its CTC model is loaded)",
+    )
+    p.add_argument(
+        "--output",
+        metavar="NAME.json",
+        help="Custom JSON name (default: final_output_<input-id>.json)",
+    )
+    p.add_argument(
+        "--device",
+        choices=("auto", "cuda", "cpu"),
+        default="auto",
+        help="Run ASR on cuda / cpu",
+    )
+    p.add_argument(
+        "--lid-model-path",
+        type=Path,
+        help=f"Path to lid.176.bin (default: ${LID_MODEL_PATH_ENV_VAR} or utils/models/lid.176.bin)",
+    )
+    p.add_argument(
+        "--nemo-model-dir",
+        type=Path,
+        help=f"Directory containing local NeMo checkpoints (default: ${NEMO_MODEL_DIR_ENV_VAR} or utils/models/nemo)",
+    )
+    p.add_argument(
+        "--hf-model-dir",
+        type=Path,
+        help=f"Directory containing the HuggingFace cache root (default: ${HF_MODEL_DIR_ENV_VAR} or utils/models/huggingface)",
+    )
     return p.parse_args()
 
 
@@ -54,10 +84,13 @@ def main() -> None:
             lang=args.lang,
             output_name=output_name,
             device=args.device,
+            lid_model_path=args.lid_model_path,
+            nemo_model_dir=args.nemo_model_dir,
+            hf_model_dir=args.hf_model_dir,
         )
     except Exception as e:
         logging.error("Fatal error: %s", e)
-        sys.exit(1)
+        sys.exit(str(e))
 
 
 if __name__ == "__main__":

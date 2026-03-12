@@ -11,8 +11,50 @@ from typing import Any, Union
 
 import torch
 
+from fsp.utils.paths import (
+    HF_MODEL_DIR_ENV_VAR,
+    LID_MODEL_PATH_ENV_VAR,
+    NEMO_MODEL_DIR_ENV_VAR,
+    ModelPaths,
+    resolve_model_paths,
+)
 
-def load_model(kind: str, repo: str, device: str) -> Any:
+
+def configure_model_environment(
+    lid_model_path: Union[str, Path, None] = None,
+    nemo_model_dir: Union[str, Path, None] = None,
+    hf_model_dir: Union[str, Path, None] = None,
+) -> ModelPaths:
+    """
+    Configure runtime model paths and cache locations.
+    """
+    model_paths = resolve_model_paths(
+        lid_model_path=lid_model_path,
+        nemo_model_dir=nemo_model_dir,
+        hf_model_dir=hf_model_dir,
+    )
+    hf_home = model_paths.hf_model_dir
+    hf_hub_cache = hf_home / "hub"
+    nemo_cache_dir = model_paths.nemo_model_dir
+
+    os.environ[LID_MODEL_PATH_ENV_VAR] = str(model_paths.lid_model_path)
+    os.environ[NEMO_MODEL_DIR_ENV_VAR] = str(model_paths.nemo_model_dir)
+    os.environ[HF_MODEL_DIR_ENV_VAR] = str(model_paths.hf_model_dir)
+    os.environ["HF_HOME"] = str(hf_home)
+    os.environ["HF_HUB_CACHE"] = str(hf_hub_cache)
+    os.environ["TRANSFORMERS_CACHE"] = str(hf_hub_cache)
+    os.environ["NEMO_CACHE_DIR"] = str(nemo_cache_dir)
+
+    return model_paths
+
+
+def load_model(
+    kind: str,
+    repo: str,
+    device: str,
+    nemo_model_dir: Union[str, Path, None] = None,
+    hf_model_dir: Union[str, Path, None] = None,
+) -> Any:
     """
     Load one ASR model (no global cache so RSS stays small).
 
@@ -20,10 +62,14 @@ def load_model(kind: str, repo: str, device: str) -> Any:
         kind: Model type ('pipe', 'rnnt', or 'multi')
         repo: Model repository/name
         device: Device to load model on ('cuda' or 'cpu')
+        nemo_model_dir: Directory containing local NeMo checkpoints
+        hf_model_dir: Directory containing the HuggingFace cache root
 
     Returns:
         Loaded model object
     """
+    configure_model_environment(nemo_model_dir=nemo_model_dir, hf_model_dir=hf_model_dir)
+
     if kind == "pipe":
         from transformers import pipeline as hf_pipeline
 
@@ -74,17 +120,17 @@ def download_nemo_ctc(model_name: str, out_dir: Path) -> None:
     """
     out_path = out_dir / f"{model_name}.nemo"
     if out_path.exists():
-        print(f"  ✓ Already exists: {out_path}")
+        print(f"  Already exists: {out_path}")
         return
 
     import nemo.collections.asr as nemo_asr
 
-    print(f"  ↓ Downloading NeMo model: {model_name} ...")
+    print(f"  Downloading NeMo model: {model_name} ...")
     model = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(model_name)
 
     # Save to our local directory
     model.save_to(str(out_path))
-    print(f"  ✓ Saved to: {out_path}")
+    print(f"  Saved to: {out_path}")
 
     # Clean up RAM
     unload_model(model)
@@ -99,18 +145,26 @@ def download_hf_model(repo_id: str, hf_home: Path) -> None:
         hf_home: HuggingFace home directory
     """
     os.environ["HF_HOME"] = str(hf_home)
+    os.environ["HF_HUB_CACHE"] = str(hf_home / "hub")
+    os.environ["TRANSFORMERS_CACHE"] = str(hf_home / "hub")
 
     from huggingface_hub import snapshot_download
 
     cache_name = repo_id.replace("/", "--")
     model_dir = hf_home / "hub" / f"models--{cache_name}"
     if model_dir.exists():
-        print(f"  ✓ Already cached: {repo_id}")
+        print(f"  Already cached: {repo_id}")
         return
 
-    print(f"  ↓ Downloading HuggingFace model: {repo_id} ...")
+    print(f"  Downloading HuggingFace model: {repo_id} ...")
     snapshot_download(repo_id)
-    print(f"  ✓ Cached: {repo_id}")
+    print(f"  Cached: {repo_id}")
 
 
-__all__ = ["load_model", "unload_model", "download_nemo_ctc", "download_hf_model"]
+__all__ = [
+    "configure_model_environment",
+    "load_model",
+    "unload_model",
+    "download_nemo_ctc",
+    "download_hf_model",
+]

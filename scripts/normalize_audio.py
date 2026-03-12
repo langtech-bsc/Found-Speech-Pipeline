@@ -28,9 +28,9 @@ def main() -> None:
     try:
         normalize_audio(args.input_id)
     except FileNotFoundError as e:
-        sys.exit(f"❌  {e}")
+        sys.exit(str(e))
     except ValueError as e:
-        sys.exit(f"❌  {e}")
+        sys.exit(str(e))
 
 
 if __name__ == "__main__":

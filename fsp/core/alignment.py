@@ -19,8 +19,8 @@ import torch
 
 from fsp.core.text import clean_text
 from fsp.utils.language import choose_language
-from fsp.utils.models import load_model, unload_model
-from fsp.utils.paths import ALIGN_DIR, LOG_DIR, MANIFEST_DIR, NORM_DIR, OUTPUT_SEGMENT_DIR, ROOT
+from fsp.utils.models import configure_model_environment, load_model, unload_model
+from fsp.utils.paths import ALIGN_DIR, MANIFEST_DIR, NORM_DIR, OUTPUT_SEGMENT_DIR, ROOT
 
 if TYPE_CHECKING:
     import fasttext
@@ -222,6 +222,9 @@ def generate_final_data(
     lang: str = "ca",
     output_name: str | None = None,
     device: str = "auto",
+    lid_model_path: str | Path | None = None,
+    nemo_model_dir: str | Path | None = None,
+    hf_model_dir: str | Path | None = None,
 ) -> Path:
     """
     Main function to generate word-level aligned JSON with ASR enrichment.
@@ -231,10 +234,19 @@ def generate_final_data(
         lang: Primary language ('ca' or 'es')
         output_name: Custom output JSON name
         device: Device for ASR ('auto', 'cuda', 'cpu')
+        lid_model_path: Path to the FastText language-ID model file
+        nemo_model_dir: Directory containing local NeMo checkpoints
+        hf_model_dir: Directory containing the HuggingFace cache root
 
     Returns:
         Path to the output JSON file
     """
+    model_paths = configure_model_environment(
+        lid_model_path=lid_model_path,
+        nemo_model_dir=nemo_model_dir,
+        hf_model_dir=hf_model_dir,
+    )
+
     import fasttext
     import nemo.collections.asr as nemo_asr
 
@@ -243,12 +255,13 @@ def generate_final_data(
     start = time.perf_counter()
     output_name = output_name or f"final_output_{input_id}.json"
 
-    # Static resources
-    lid_model = fasttext.load_model(str(ROOT / "utils" / "models" / "lid.176.bin"))
+    if not model_paths.lid_model_path.is_file():
+        raise FileNotFoundError(f"language-ID model not found: {model_paths.lid_model_path}")
+    lid_model = fasttext.load_model(str(model_paths.lid_model_path))
 
     # Load CTC model
     primary_model_name = CTC_MODELS[lang]
-    local_nemo = ROOT / "utils" / "models" / "nemo" / f"{primary_model_name}.nemo"
+    local_nemo = model_paths.nemo_model_dir / f"{primary_model_name}.nemo"
 
     if local_nemo.is_file():
         print(f"Loading local NeMo model: {local_nemo}")
@@ -321,7 +334,13 @@ def generate_final_data(
             model = None
             try:
                 logging.info("loading %s", repo)
-                model = load_model(kind, repo, resolved_device)
+                model = load_model(
+                    kind,
+                    repo,
+                    resolved_device,
+                    nemo_model_dir=model_paths.nemo_model_dir,
+                    hf_model_dir=model_paths.hf_model_dir,
+                )
                 print(f"Model {name} loaded on device {resolved_device}")
                 for r in segs:
                     key = f"pred_text_{name}"
@@ -342,14 +361,14 @@ def generate_final_data(
                         r[norm_key] = ""
             except Exception as err:
                 logging.warning("Could not load model %s (%s): %s — skipping", name, repo, err)
-                print(f"⚠  Skipping model {name}: {err}")
+                print(f"Skipping model {name}: {err}")
             finally:
                 unload_model(model)
 
     # 4. Write JSON
     final_fp = OUTPUT_SEGMENT_DIR / output_name
     final_fp.write_text(json.dumps(combined, indent=2, ensure_ascii=False))
-    print(f"✓  JSON written to {final_fp}  ({time.perf_counter()-start:.1f}s)")
+    print(f"JSON written to {final_fp} ({time.perf_counter() - start:.1f}s)")
 
     return final_fp
 
