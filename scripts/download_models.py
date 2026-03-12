@@ -24,6 +24,7 @@ from pathlib import Path
 
 # Import core logic from fsp package
 from fsp.utils.models import download_hf_model, download_nemo_ctc
+from fsp.utils.paths import MODEL_DIR_ENV_VAR, MODELS_DIR
 
 # Model catalogue
 NEMO_CTC_MODELS = {
@@ -47,7 +48,10 @@ HF_MODELS = {
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Download ASR models for offline use")
+    ap = argparse.ArgumentParser(
+        description="Download ASR models for offline use",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     ap.add_argument(
         "--lang",
         choices=("ca", "es", "all"),
@@ -57,8 +61,8 @@ def main() -> None:
     ap.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("utils/models"),
-        help="Root output directory (default: utils/models)",
+        default=MODELS_DIR,
+        help=f"Root output directory (default: ${MODEL_DIR_ENV_VAR} or utils/models)",
     )
     args = ap.parse_args()
 
@@ -83,7 +87,7 @@ def main() -> None:
             print(f"[HuggingFace] {repo_id}")
             download_hf_model(repo_id, hf_dir)
 
-    print(f"\n✅ All models downloaded to {args.out_dir.resolve()}")
+    print(f"\nAll models downloaded to {args.out_dir.resolve()}")
     print("Mount this directory into the container at /app/utils/models for offline use.")
 
 

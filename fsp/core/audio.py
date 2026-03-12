@@ -112,7 +112,7 @@ def normalize_audio(
     }
     meta_path.write_text(json.dumps([entry], ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"✓  Normalized audio and metadata written to → {output_dir / input_id}")
+    print(f"Normalized audio and metadata written to: {output_dir / input_id}")
     return output_dir / input_id
 
 

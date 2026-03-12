@@ -62,7 +62,7 @@ def main():
     df[["wav_path", "text", "normalized_text"]].to_csv(
         out_name, sep="\t", index=False, header=False, quoting=csv.QUOTE_ALL
     )
-    print(f"✔ Normalized TSV written to: {out_name}")
+    print(f"Normalized TSV written to: {out_name}")
 
 
 if __name__ == "__main__":
