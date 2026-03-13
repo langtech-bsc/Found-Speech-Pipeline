@@ -5,6 +5,8 @@ download_models.py
 Download all ASR models needed by the FSP pipeline to utils/models/
 so the pipeline can run fully offline.
 
+CLI wrapper for fsp.utils.models functions.
+
 Usage (from project root, inside the Docker container or with the venv active):
     python scripts/download_models.py --lang es      # Spanish only
     python scripts/download_models.py --lang ca      # Catalan only
@@ -18,22 +20,18 @@ Models are saved to:
 from __future__ import annotations
 
 import argparse
-import os
-import shutil
-import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Model catalogue  (mirrors MODELS_BY_LANG in generate_final_data.py)
-# ---------------------------------------------------------------------------
+# Import core logic from fsp package
+from fsp.utils.models import download_hf_model, download_nemo_ctc
+from fsp.utils.paths import MODEL_DIR_ENV_VAR, MODELS_DIR
 
-# NeMo CTC models downloaded from NVIDIA NGC via nemo_asr
+# Model catalogue
 NEMO_CTC_MODELS = {
     "ca": "stt_ca_conformer_ctc_large",
     "es": "stt_es_conformer_ctc_large",
 }
 
-# Models downloaded via HuggingFace Hub
 HF_MODELS = {
     "ca": [
         "projecte-aina/whisper-large-v3-ca-3catparla",
@@ -49,49 +47,11 @@ HF_MODELS = {
 }
 
 
-def download_nemo_ctc(model_name: str, out_dir: Path) -> None:
-    """Download a NeMo CTC model from NGC and save the .nemo file locally."""
-    out_path = out_dir / f"{model_name}.nemo"
-    if out_path.exists():
-        print(f"  ✓ Already exists: {out_path}")
-        return
-
-    import nemo.collections.asr as nemo_asr
-
-    print(f"  ↓ Downloading NeMo model: {model_name} ...")
-    model = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(model_name)
-
-    # Save to our local directory
-    model.save_to(str(out_path))
-    print(f"  ✓ Saved to: {out_path}")
-
-    # Clean up RAM
-    del model
-    import gc, torch
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-
-def download_hf_model(repo_id: str, hf_home: Path) -> None:
-    """Download a HuggingFace model snapshot."""
-    os.environ["HF_HOME"] = str(hf_home)
-
-    from huggingface_hub import snapshot_download
-
-    cache_name = repo_id.replace("/", "--")
-    model_dir = hf_home / "hub" / f"models--{cache_name}"
-    if model_dir.exists():
-        print(f"  ✓ Already cached: {repo_id}")
-        return
-
-    print(f"  ↓ Downloading HuggingFace model: {repo_id} ...")
-    snapshot_download(repo_id)
-    print(f"  ✓ Cached: {repo_id}")
-
-
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Download ASR models for offline use")
+    ap = argparse.ArgumentParser(
+        description="Download ASR models for offline use",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     ap.add_argument(
         "--lang",
         choices=("ca", "es", "all"),
@@ -101,8 +61,8 @@ def main() -> None:
     ap.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("utils/models"),
-        help="Root output directory (default: utils/models)",
+        default=MODELS_DIR,
+        help=f"Root output directory (default: ${MODEL_DIR_ENV_VAR} or utils/models)",
     )
     args = ap.parse_args()
 
@@ -127,7 +87,7 @@ def main() -> None:
             print(f"[HuggingFace] {repo_id}")
             download_hf_model(repo_id, hf_dir)
 
-    print(f"\n✅ All models downloaded to {args.out_dir.resolve()}")
+    print(f"\nAll models downloaded to {args.out_dir.resolve()}")
     print("Mount this directory into the container at /app/utils/models for offline use.")
 
 
