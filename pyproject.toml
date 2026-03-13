@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fsp"
+version = "0.1.0"
+description = "Found-Speech-Pipeline: ASR processing and alignment pipeline"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+
+dependencies = [
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "nemo_toolkit[asr]",
+    "transformers>=4.30.0",
+    "pandas>=2.0.0",
+    "jiwer>=3.0.0",
+    "soundfile>=0.12.0",
+    "fasttext-wheel>=0.9.0",
+    "num2words>=0.5",
+    "Levenshtein>=0.20.0",
+    "flask>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+fsp-normalize-tsv = "scripts.normalize_tsv:main"
+fsp-normalize-audio = "scripts.normalize_audio:main"
+fsp-clean-expand = "scripts.clean_and_expand:main"
+fsp-clean-split = "scripts.clean_and_split:main"
+fsp-duration-filter = "scripts.duration_filter:main"
+fsp-rover-merge = "scripts.rover_merge:main"
+fsp-generate-final = "steps.generate_final_data:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fsp*", "scripts*", "steps*"]
+
+[tool.setuptools.package-data]
+"fsp.data" = ["*.py"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

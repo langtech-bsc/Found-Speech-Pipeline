@@ -5,143 +5,97 @@ pipeline_service.py – orchestrates the FSP pipeline
 
 Modes
 -----
-• Single:  --input-id <id>
-• Batch:   (no --input-id) → auto-detect all valid pairs in ingestion/
+- Single:  --input-id <id>
+- Batch:   (no --input-id) -> auto-detect all valid pairs in ingestion/
 """
 
 from __future__ import annotations
-import argparse, subprocess, sys
+
+import argparse
+import sys
 from pathlib import Path
-from typing import List
 
-# project paths
-ROOT          = Path(__file__).resolve().parent
-SCRIPTS_DIR   = ROOT / "scripts"
-INGESTION_DIR = ROOT / "ingestion"
-STEPS_DIR     = ROOT / "steps"
-ROVER_DIR     = ROOT / "merged"
-ROVER_DIR.mkdir(exist_ok=True, parents=True)
-
-PY = sys.executable
-
-# -------------------------------------------------
-# Helpers
-# -------------------------------------------------
-
-def run(label: str,
-        cmd:  List[str | Path],
-        cwd:  Path | None = None,
-        env:  dict | None = None) -> None:
-    txt = " ".join(str(c) for c in cmd)
-    print(f"\n► {label}\n  $ {txt}")
-    if subprocess.run(cmd, cwd=cwd, env=env).returncode:
-        sys.exit(f"✖  {label} failed")
-
-def find_valid_input_ids() -> list[str]:
-    """
-    Scan ingestion/ and return all valid audio-transcript pair IDs
-    (that have BOTH .wav and .tsv files).
-    """
-    wav_ids = {p.stem for p in INGESTION_DIR.glob("*.wav")}
-    tsv_ids = {p.stem for p in INGESTION_DIR.glob("*.tsv")}
-
-    valid_ids = sorted(wav_ids & tsv_ids)
-
-    if not valid_ids:
-        print("⚠️  No valid (.wav + .tsv) pairs found in ingestion/")
-    else:
-        print(f"🔎 Found {len(valid_ids)} valid input pair(s)")
-
-    return valid_ids
+# Import the Pipeline class from fsp package
+from fsp.pipeline import Pipeline
+from fsp.utils.paths import (HF_MODEL_DIR_ENV_VAR, INGESTION_DIR,
+                             LID_MODEL_PATH_ENV_VAR, NEMO_MODEL_DIR_ENV_VAR,
+                             OUTPUT_SEGMENT_DIR)
 
 
-
-# -------------------------------------------------
-# Pipeline
-# -------------------------------------------------
-
-def process_existing_paired_input(input_id: str, lang: str, max_dur: float = 30) -> None:
-
-    raw_tsv = INGESTION_DIR / f"{input_id}.tsv"
-    raw_wav = INGESTION_DIR / f"{input_id}.wav"
-
-    if not raw_tsv.exists() or not raw_wav.exists():
-        raise RuntimeError(f"Missing pair for input ID: {input_id}")
-
-    out_json_name = f"final_output_{input_id}.json"
-    out_json_path = ROOT / "inputs" / "output_segment" / out_json_name
-    
-    # 1️⃣ Normalize TSV
-    run("Normalise TSV",
-        [PY, SCRIPTS_DIR / "normalize_tsv.py", raw_tsv, lang, ". "])
-
-    # 2️⃣ Normalize audio + metadata 
-    run("Ingest single",
-        [PY, SCRIPTS_DIR / "normalize_audio.py", f"--input-id={input_id}"])
-
-    # 3️⃣ Generate final data (aligner runs on CPU internally, but ASR can use GPU)
-    run("Generate final data",
-        [PY, STEPS_DIR / "generate_final_data.py",
-         f"--input-id={input_id}", f"--lang={lang}", "--output", out_json_name])
-    
-
-    # 4️⃣ Duration filter
-    run("Duration filter",
-        [PY, SCRIPTS_DIR / "duration_filter.py", out_json_path, "--max", str(max_dur)])
-
-    # 5️⃣ ROVER merge
-    run("ROVER merge",
-        [PY, SCRIPTS_DIR / "rover_merge.py",
-         out_json_path, "--csv", "--plot", "--out-dir", ROVER_DIR])
-
-
-# -------------------------------------------------
-# CLI
-# -------------------------------------------------
 def main() -> None:
-    ap = argparse.ArgumentParser("Run FSP pipeline from existing WAV+TSV")
-    ap.add_argument("--input-id", help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)")
+    ap = argparse.ArgumentParser(
+        "Run FSP pipeline from existing WAV+TSV",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ap.add_argument(
+        "--input-id",
+        help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)",
+    )
     ap.add_argument("--lang", choices=("ca", "es"), default="ca")
-    ap.add_argument("--max-duration", type=float, default=30,
-                    help="Maximum segment duration in seconds (default: 30)")
+    ap.add_argument(
+        "--max-duration",
+        type=float,
+        default=30,
+        help="Maximum segment duration in seconds",
+    )
+    ap.add_argument(
+        "--min-duration",
+        type=float,
+        default=2,
+        help="Minimum segment duration in seconds",
+    )
+    ap.add_argument(
+        "--lid-model-path",
+        type=Path,
+        help=f"Path to lid.176.bin (default: ${LID_MODEL_PATH_ENV_VAR} or utils/models/lid.176.bin)",
+    )
+    ap.add_argument(
+        "--nemo-model-dir",
+        type=Path,
+        help=f"Directory containing local NeMo checkpoints (default: ${NEMO_MODEL_DIR_ENV_VAR} or utils/models/nemo)",
+    )
+    ap.add_argument(
+        "--hf-model-dir",
+        type=Path,
+        help=f"Directory containing the HuggingFace cache root (default: ${HF_MODEL_DIR_ENV_VAR} or utils/models/huggingface)",
+    )
 
     args = ap.parse_args()
 
     if not INGESTION_DIR.exists():
-        sys.exit("❌ ingestion/ directory not found")
+        sys.exit("ingestion/ directory not found")
+
+    # Create pipeline instance
+    pipeline = Pipeline(
+        lang=args.lang,
+        max_duration=args.max_duration,
+        min_duration=args.min_duration,
+        lid_model_path=args.lid_model_path,
+        nemo_model_dir=args.nemo_model_dir,
+        hf_model_dir=args.hf_model_dir,
+    )
 
     # -------------------------------
     # SINGLE MODE
     # -------------------------------
     if args.input_id:
-        print("\n" + "═" * 70)
+        print("\n" + "=" * 70)
         print(f"Processing single audio-transcript pair: {args.input_id}")
-        print("═" * 70)
+        print("=" * 70)
 
         try:
-            process_existing_paired_input(args.input_id, args.lang, args.max_duration)
+            output_path = pipeline.run_all(args.input_id)
         except Exception as e:
-            sys.exit(f"❌ {e}")
+            sys.exit(str(e))
+
+        print(f"\nPipeline finished. Final JSON file: {output_path}")
 
     # -------------------------------
     # BATCH MODE
     # -------------------------------
     else:
-        input_ids = find_valid_input_ids()
-
-        for i, input_id in enumerate(input_ids, 1):
-            print("\n" + "═" * 70)
-            print(f"[{i}/{len(input_ids)}] Processing {input_id}")
-            print("═" * 70)
-
-            try:
-                process_existing_paired_input(input_id, args.lang, args.max_duration)
-            except Exception as e:
-                print(f"❌ Failed: {input_id} → {e}")
-                print("⚠️  Skipping...\n")
-
-    print("\n✅ Pipeline finished – find JSON in",
-          ROOT / "inputs" / "wordlevel_alignment")
+        pipeline.run_batch()
+        print(f"\nPipeline finished. Final JSON files are in {OUTPUT_SEGMENT_DIR}")
 
 
 if __name__ == "__main__":

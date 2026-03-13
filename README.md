@@ -114,6 +114,11 @@ docker run --rm --user $(id -u):$(id -g) \
   fsp-pipeline python pipeline_service.py --lang es
 ```
 
+If your models live outside the repository, pass the explicit runtime paths:
+`--lid-model-path /path/to/lid.176.bin`, `--nemo-model-dir /path/to/nemo`, and
+`--hf-model-dir /path/to/huggingface`. For `run_singularity.sh`, set
+`LID_MODEL_PATH`, `NEMO_MODEL_DIR`, and `HF_MODEL_DIR` before invoking the wrapper.
+
 ### Step 4. Run fully offline (optional)
 
 Once all models are downloaded, you can run with no network access:
@@ -157,7 +162,9 @@ This creates `fsp-pipeline.sif` (~3–4 GB) from the Docker image. Takes ~5–10
 ./run_singularity.sh --lang es
 ```
 
-The `run_singularity.sh` wrapper automatically binds `ingestion/`, `inputs/`, `merged/`, and `utils/models/` into the container.
+The `run_singularity.sh` wrapper automatically binds `ingestion/`, `inputs/`, `merged/`,
+`${LID_MODEL_PATH:-utils/models/lid.176.bin}`, `${NEMO_MODEL_DIR:-utils/models/nemo}`,
+and `${HF_MODEL_DIR:-utils/models/huggingface}` into the container.
 
 > [!TIP]
 > Both `run_singularity.sh` and `docker run` commands pass all trailing arguments directly to `pipeline_service.py`. You can append any flag (like `--max-duration 60`) to these commands.
@@ -314,6 +321,9 @@ The main entry point. Orchestrates all stages.
 | `--input-id` | Process a single audio‑transcript pair (optional; omit for batch mode) |
 | `--lang` | `ca` or `es` (default: `ca`) |
 | `--max-duration` | Maximum segment duration in seconds (default: `30`) |
+| `--lid-model-path` | FastText language-ID model file (default: `$LID_MODEL_PATH` or `utils/models/lid.176.bin`) |
+| `--nemo-model-dir` | Directory with local NeMo checkpoints (default: `$NEMO_MODEL_DIR` or `utils/models/nemo`) |
+| `--hf-model-dir` | HuggingFace cache root (default: `$HF_MODEL_DIR` or `utils/models/huggingface`) |
 
 ### `scripts/download_models.py`
 
@@ -322,7 +332,7 @@ Utility to pre-cache models on the host for offline use.
 | Argument | Description |
 |---|---|
 | `--lang` | `ca`, `es`, or `all` (default: `all`) |
-| `--out-dir` | Root output directory (default: `utils/models`) |
+| `--out-dir` | Root output directory (default: `$MODEL_DIR` or `utils/models`) |
 
 ### `scripts/normalize_audio.py`
 
@@ -342,6 +352,9 @@ The core processing engine. Handle carefully.
 | `--lang` | `ca` or `es` (default: `ca`) |
 | `--output` | Custom JSON filename (default: `final_output_<id>.json`) |
 | `--device` | `cuda`, `cpu`, or `auto` (default: `auto`) |
+| `--lid-model-path` | FastText language-ID model file (default: `$LID_MODEL_PATH` or `utils/models/lid.176.bin`) |
+| `--nemo-model-dir` | Directory with local NeMo checkpoints (default: `$NEMO_MODEL_DIR` or `utils/models/nemo`) |
+| `--hf-model-dir` | HuggingFace cache root (default: `$HF_MODEL_DIR` or `utils/models/huggingface`) |
 
 ### `scripts/duration_filter.py`
 
