@@ -15,7 +15,6 @@ Flags:
     
 """
 
-from num2words import num2words
 import re
 import sys
 import string
@@ -38,6 +37,8 @@ def clean_numbers(text, dots_and_commas):
     return text
     
 def numbers_to_chars(text, lang): 
+    from num2words import num2words
+
     numbers = re.findall(r'\d+', text)
     numbers.sort(reverse=True)
     for number in numbers:

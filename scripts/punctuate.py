@@ -8,13 +8,6 @@ import sys
 import warnings
 from pathlib import Path
 
-# ── Point HuggingFace cache at the shared GPFS models directory ─────────
-MODELS_ROOT = "/gpfs/projects/bsc88/speech/ASR/models"
-os.environ.setdefault("HF_HOME", f"{MODELS_ROOT}/huggingface")
-# Enforce fully-offline operation — never download anything
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-
 # Suppress warning from using HuggingFace pipelines sequentially
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.pipelines.base")
 from typing import Any, Dict, List, Tuple
@@ -22,7 +15,9 @@ from typing import Any, Dict, List, Tuple
 import torch
 from transformers import (
     AutoModelForSeq2SeqLM,
+    AutoModelForTokenClassification,
     AutoTokenizer,
+    GenerationConfig,
     pipeline,
 )
 
@@ -33,6 +28,12 @@ except ImportError:
     sys.path.append(str(Path(__file__).resolve().parent))
     from clean_and_expand import clean_text
 
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from model_paths import configure_model_env
+
+
+MODELS_ROOT = str(configure_model_env())
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -40,10 +41,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 MODELS: Dict[str, Any] = {}
 
 MODEL_MAP: Dict[str, Tuple[str, str]] = {
-    "ca": ("UMUTeam/catalan_capitalization_punctuation_restoration", "token-classification"),
-    "es": ("UMUTeam/spanish_capitalization_punctuation_restoration", "token-classification"),
-    "gl": ("UMUTeam/galician_capitalization_punctuation_restoration", "token-classification"),
-    "eu": ("HiTZ/cap-punct-eu", "seq2seq"),
+    "ca": ("catalan_capitalization_punctuation_restoration", "token-classification"),
+    "es": ("spanish_capitalization_punctuation_restoration", "token-classification"),
+    "gl": ("galician_capitalization_punctuation_restoration", "token-classification"),
+    "eu": ("cap-punct-eu", "seq2seq"),
 }
 
 # Label map for UMUTeam token-classification models (based on config.id2label)
@@ -64,6 +65,30 @@ UMUTEAM_LABELS: Dict[str, Dict[str, str]] = {
 }
 
 
+def _is_model_dir(path: Path) -> bool:
+    return path.is_dir() and (path / "config.json").is_file()
+
+
+def resolve_local_model_dir(model_ref: str) -> Path:
+    candidate = Path(model_ref).expanduser()
+    if _is_model_dir(candidate):
+        return candidate
+
+    models_root = Path(MODELS_ROOT)
+    direct_candidates = [
+        models_root / model_ref,
+        models_root / Path(model_ref).name,
+    ]
+    for direct in direct_candidates:
+        if _is_model_dir(direct):
+            return direct
+
+    raise FileNotFoundError(
+        f"Local punctuation model not found for '{model_ref}'. "
+        f"Checked only direct model directories under {models_root}."
+    )
+
+
 def load_model_cached(lang: str, device: int):
     if lang in MODELS:
         return MODELS[lang]
@@ -72,13 +97,16 @@ def load_model_cached(lang: str, device: int):
         raise ValueError(f"Unsupported language '{lang}'. Supported: {sorted(MODEL_MAP.keys())}")
 
     model_name, model_type = MODEL_MAP[lang]
-    logging.info("Loading %s model: %s (%s)", lang, model_name, model_type)
+    model_dir = resolve_local_model_dir(model_name)
+    logging.info("Loading %s model from local path: %s (%s)", lang, model_dir, model_type)
 
     if model_type == "token-classification":
-        # aggregation_strategy="none" gives per-token predictions with offsets
+        tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
+        model = AutoModelForTokenClassification.from_pretrained(model_dir, local_files_only=True)
         pipe = pipeline(
             "token-classification",
-            model=model_name,
+            model=model,
+            tokenizer=tokenizer,
             device=device,
             aggregation_strategy="none",
         )
@@ -86,8 +114,15 @@ def load_model_cached(lang: str, device: int):
         return MODELS[lang]
 
     if model_type == "seq2seq":
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to("cuda" if device != -1 else "cpu")
+        tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"`num_beams` is set to None - defaulting to 1\.",
+                category=UserWarning,
+            )
+            model = AutoModelForSeq2SeqLM.from_pretrained(model_dir, local_files_only=True)
+        model = model.to("cuda" if device != -1 else "cpu")
         MODELS[lang] = ((model, tokenizer), "seq2seq")
         return MODELS[lang]
 
@@ -152,9 +187,26 @@ def apply_seq2seq_punctuation(text: str, model_tuple) -> str:
     model, tokenizer = model_tuple
     inputs = tokenizer(text, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"`num_beams` is set to None - defaulting to 1\.",
+            category=UserWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=r"You have modified the pretrained model configuration to control generation\..*",
+            category=UserWarning,
+        )
+        generation_config = GenerationConfig.from_dict(model.generation_config.to_dict())
+        generation_config.num_beams = 1
 
-    with torch.no_grad():
-        outputs = model.generate(**inputs, max_new_tokens=len(inputs["input_ids"][0]) * 2)
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                generation_config=generation_config,
+                max_new_tokens=len(inputs["input_ids"][0]) * 2,
+            )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
@@ -245,10 +297,8 @@ def process_file(json_path: Path, device: int) -> None:
             logging.warning("No text found in segment, skipping.")
             continue
 
-        normalized = clean_text(input_text, lang, False, False)
-        segment["text_normalized"] = normalized
-
-        segment["text_punctuated"] = punctuate_text(normalized, lang, device)
+        segment["text_normalized"] = input_text
+        segment["text_punctuated"] = punctuate_text(input_text, lang, device)
 
     _write_json(json_path, data)
     logging.info("Updated %s", json_path)

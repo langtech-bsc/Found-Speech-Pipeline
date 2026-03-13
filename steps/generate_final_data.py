@@ -38,19 +38,12 @@ from pyctcdecode import build_ctcdecoder
 from transformers import pipeline as hf_pipeline
 import os
 
-# ── Point model‑caches at the shared GPFS models directory ──────────────
-MODELS_ROOT = "/gpfs/projects/bsc88/speech/ASR/models"
-os.environ.setdefault("HF_HOME", f"{MODELS_ROOT}/huggingface")
-os.environ.setdefault("NEMO_CACHE_DIR", f"{MODELS_ROOT}/nemo")
-# Enforce fully-offline operation — never download anything
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-#current_dir = os.path.dirname(os.path.abspath(__file__))
-#scripts_dir = os.path.join(current_dir, "..", "scripts")
-#sys.path.insert(0, os.path.abspath(scripts_dir))
-#from clean_and_expand import clean_text
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from model_paths import configure_model_env, resolve_fasttext_model
 from scripts.clean_and_expand import clean_text
+
+# ── Resolve model locations for cluster and repo-local runs ─────────────
+MODELS_ROOT = str(configure_model_env())
 
 # project local
 from segment import Segmenter
@@ -219,6 +212,13 @@ def unload_model(model) -> None:
             torch.cuda.empty_cache()
 
 
+def _move_inputs_to_device(inputs: Dict[str, Any], device: str) -> Dict[str, Any]:
+    moved: Dict[str, Any] = {}
+    for key, value in inputs.items():
+        moved[key] = value.to(device) if hasattr(value, "to") else value
+    return moved
+
+
 def transcribe(model, kind: str, audio: str, lang: str = "ca") -> str:
     """Run *model* on *audio* and normalise the string it returns."""
     if kind == "pipe":
@@ -359,7 +359,10 @@ def main() -> None:
     start = time.perf_counter()
 
     # Static resources
-    lid_model = fasttext.load_model(f"{MODELS_ROOT}/fasttext/lid.176.bin")
+    lid_path = resolve_fasttext_model(Path(MODELS_ROOT))
+    if not lid_path.exists():
+        sys.exit(f"❌  FastText model not found: {lid_path}")
+    lid_model = fasttext.load_model(str(lid_path))
 
     # Load the CTC model for the requested language using NFA_MODELS_BY_LANG
     _nfa_type, nfa_id = NFA_MODELS_BY_LANG[ARGS.lang]
@@ -385,6 +388,25 @@ def main() -> None:
         if (ARGS.device == "cuda" or (ARGS.device == "auto" and torch.cuda.is_available()))
         else "cpu"
     )
+
+    def transcribe_segmenter_baseline(segment: Dict[str, Any], lang: str) -> None:
+        # Preserve the legacy pred_text_segmenter field for ca/es without reintroducing
+        # a second source of truth for language assignment.
+        if lang == "ca":
+            model = ca_asr or es_asr
+        elif lang == "es":
+            model = es_asr or ca_asr
+        else:
+            return
+
+        if model is None:
+            return
+
+        try:
+            segment["pred_text_segmenter"] = transcribe(model, "ctc", segment["segment_path"], lang=lang)
+        except Exception as err:  # noqa: BLE001
+            logging.warning("segmenter baseline on %s: %s", segment["segment_path"], err)
+            segment["pred_text_segmenter"] = ""
 
     # Paths
     input_id = ARGS.input_id
@@ -429,29 +451,24 @@ def main() -> None:
         if not wav_src.is_file():
             continue
 
-        seg = Segmenter(str(ctm_file), str(wav_src), str(out_seg_dir), lid_model, ca_asr, es_asr)
+        seg = Segmenter(str(ctm_file), str(wav_src), str(out_seg_dir))
         results = seg.segment_audio()
+        kept_results: List[Dict[str, Any]] = []
 
         for r in results:
-            # Preserve Segmenter baseline hypotheses so downstream always has something to merge.
-            if isinstance(r.get("pred_text"), str) and r["pred_text"].strip():
-                r["pred_text_segmenter"] = r["pred_text"]
-            if isinstance(r.get("pred_text_lm"), str) and r["pred_text_lm"].strip():
-                r["pred_text_segmenter_lm"] = r["pred_text_lm"]
-
-            # Drop legacy keys to avoid ambiguity
-            for k in LEGACY_KEYS:
-                r.pop(k, None)
-
             lang, conf = choose_language(r["normalized_text"], lid_model, pri_lang=ARGS.lang)
-            if lang not in ("ca", "es", "eu", "gl"): continue
+            if lang not in ("ca", "es", "eu", "gl"):
+                continue
+
             r["language"] = lang
             r["language_confidence"] = round(conf, 2)
+            transcribe_segmenter_baseline(r, lang)
+            kept_results.append(r)
             buckets[lang].append(r)
 
         combined[block_id] = {
             "input_id": input_id,
-            "results": results,
+            "results": kept_results,
         }
           
     # 3 ── ASR per-language, one model at a time
