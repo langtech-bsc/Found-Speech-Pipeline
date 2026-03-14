@@ -1,0 +1,30 @@
+Bootstrap: docker
+From: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+%labels
+    Author Codex
+    Description GPU-only Apptainer image for Galician HF ASR enrichment
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PIP_NO_CACHE_DIR=1
+    export HF_HUB_DISABLE_TELEMETRY=1
+    export TRANSFORMERS_OFFLINE=1
+    export HF_HUB_OFFLINE=1
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends ffmpeg libsndfile1 git
+    rm -rf /var/lib/apt/lists/*
+
+    python -m pip install --upgrade pip
+    python -m pip install \
+        accelerate==1.2.1 \
+        librosa==0.10.2.post1 \
+        sentencepiece==0.2.0 \
+        soundfile==0.12.1 \
+        transformers==4.49.0
+
+%runscript
+    exec python "$@"

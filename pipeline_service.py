@@ -10,8 +10,9 @@ Modes
 """
 
 from __future__ import annotations
-import argparse, subprocess, sys
+import argparse, os, subprocess, sys
 from pathlib import Path
+from shutil import which
 from typing import List
 
 # project paths
@@ -20,6 +21,7 @@ SCRIPTS_DIR   = ROOT / "scripts"
 INGESTION_DIR = ROOT / "ingestion"
 STEPS_DIR     = ROOT / "steps"
 ROVER_DIR     = ROOT / "merged"
+GL_EXTRA_ASR_IMAGE = ROOT / "gl-extra-asr.sif"
 ROVER_DIR.mkdir(exist_ok=True, parents=True)
 
 PY = sys.executable
@@ -36,6 +38,40 @@ def run(label: str,
     print(f"\n► {label}\n  $ {txt}")
     if subprocess.run(cmd, cwd=cwd, env=env).returncode:
         sys.exit(f"✖  {label} failed")
+
+
+def maybe_run_gl_extra_asr(out_json_path: Path, lang: str, enabled: bool) -> None:
+    if lang != "gl" or not enabled:
+        return
+
+    runner = which("apptainer") or which("singularity")
+    if not runner:
+        raise RuntimeError("Neither 'apptainer' nor 'singularity' is available")
+    if not GL_EXTRA_ASR_IMAGE.is_file():
+        raise RuntimeError(f"Missing GL extra ASR image: {GL_EXTRA_ASR_IMAGE}")
+
+    env = os.environ.copy()
+    env.setdefault("MODELS_ROOT", "/gpfs/projects/bsc88/speech/ASR/models")
+    models_root = Path(env["MODELS_ROOT"])
+    if not models_root.is_dir():
+        raise RuntimeError(f"Models root not found: {models_root}")
+
+    cmd: List[str | Path] = [
+        runner,
+        "exec",
+        "--nv",
+        "--bind", f"{ROOT}:{ROOT}",
+        "--bind", f"{models_root}:{models_root}",
+        GL_EXTRA_ASR_IMAGE,
+        "python",
+        ROOT / "steps" / "enrich_segment_hypotheses.py",
+        out_json_path,
+        "--langs", "gl",
+        "--models", "whisper_large_v3_turbo_gl_v1_0",
+        "--device", "cuda",
+        "--overwrite-existing",
+    ]
+    run("GL extra ASR enrichment", cmd, env=env)
 
 def find_valid_input_ids() -> list[str]:
     """
@@ -60,7 +96,12 @@ def find_valid_input_ids() -> list[str]:
 # Pipeline
 # -------------------------------------------------
 
-def process_existing_paired_input(input_id: str, lang: str, max_dur: float = 30) -> None:
+def process_existing_paired_input(
+    input_id: str,
+    lang: str,
+    max_dur: float = 30,
+    enable_gl_extra_asr: bool = True,
+) -> None:
 
     raw_tsv = INGESTION_DIR / f"{input_id}.tsv"
     raw_wav = INGESTION_DIR / f"{input_id}.wav"
@@ -83,18 +124,20 @@ def process_existing_paired_input(input_id: str, lang: str, max_dur: float = 30)
     run("Generate final data",
         [PY, STEPS_DIR / "generate_final_data.py",
          f"--input-id={input_id}", f"--lang={lang}", "--output", out_json_name])
-    
 
-    # 4️⃣ Duration filter
+    # 4️⃣ Optional GL-only sidecar enrichment on GPU
+    maybe_run_gl_extra_asr(out_json_path, lang, enable_gl_extra_asr)
+
+    # 5️⃣ Duration filter
     run("Duration filter",
         [PY, SCRIPTS_DIR / "duration_filter.py", out_json_path, "--max", str(max_dur)])
 
-    # 5️⃣ ROVER merge
+    # 6️⃣ ROVER merge
     run("ROVER merge",
         [PY, SCRIPTS_DIR / "rover_merge.py",
          out_json_path, "--csv", "--plot", "--out-dir", ROVER_DIR])
 
-    # 6️⃣ Punctuation & Capitalization restoration
+    # 7️⃣ Punctuation & Capitalization restoration
     rover_json = ROVER_DIR / f"final_output_{input_id}.json"
     run("Punctuation & Capitalization",
         [PY, SCRIPTS_DIR / "punctuate.py", rover_json])
@@ -109,6 +152,8 @@ def main() -> None:
     ap.add_argument("--lang", choices=("ca", "es", "eu", "gl"), default="ca")
     ap.add_argument("--max-duration", type=float, default=30,
                     help="Maximum segment duration in seconds (default: 30)")
+    ap.add_argument("--skip-gl-extra-asr", action="store_true",
+                    help="Skip the GL-specific Apptainer enrichment step")
 
     args = ap.parse_args()
 
@@ -124,7 +169,12 @@ def main() -> None:
         print("═" * 70)
 
         try:
-            process_existing_paired_input(args.input_id, args.lang, args.max_duration)
+            process_existing_paired_input(
+                args.input_id,
+                args.lang,
+                args.max_duration,
+                enable_gl_extra_asr=not args.skip_gl_extra_asr,
+            )
         except Exception as e:
             sys.exit(f"❌ {e}")
 
@@ -140,7 +190,12 @@ def main() -> None:
             print("═" * 70)
 
             try:
-                process_existing_paired_input(input_id, args.lang, args.max_duration)
+                process_existing_paired_input(
+                    input_id,
+                    args.lang,
+                    args.max_duration,
+                    enable_gl_extra_asr=not args.skip_gl_extra_asr,
+                )
             except Exception as e:
                 print(f"❌ Failed: {input_id} → {e}")
                 print("⚠️  Skipping...\n")
