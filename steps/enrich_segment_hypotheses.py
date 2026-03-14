@@ -67,7 +67,6 @@ HF_ENRICH_MODELS: dict[str, tuple[ModelSpec, ...]] = {
             kind="phi4_multimodal_audio",
             repo_name="phi-4-multimodal-instruct-gl-v1.0",
             language="gl",
-            enabled_by_default=False,
         ),
     ),
 }

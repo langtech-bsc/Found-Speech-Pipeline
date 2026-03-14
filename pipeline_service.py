@@ -22,6 +22,7 @@ INGESTION_DIR = ROOT / "ingestion"
 STEPS_DIR     = ROOT / "steps"
 ROVER_DIR     = ROOT / "merged"
 GL_EXTRA_ASR_IMAGE = ROOT / "gl-extra-asr.sif"
+SINGULARITY_FALLBACK = Path("/apps/GPP/SINGULARITY/3.11.5/bin/singularity")
 ROVER_DIR.mkdir(exist_ok=True, parents=True)
 
 PY = sys.executable
@@ -45,6 +46,8 @@ def maybe_run_gl_extra_asr(out_json_path: Path, lang: str, enabled: bool) -> Non
         return
 
     runner = which("apptainer") or which("singularity")
+    if not runner and SINGULARITY_FALLBACK.is_file():
+        runner = str(SINGULARITY_FALLBACK)
     if not runner:
         raise RuntimeError("Neither 'apptainer' nor 'singularity' is available")
     if not GL_EXTRA_ASR_IMAGE.is_file():
@@ -67,7 +70,7 @@ def maybe_run_gl_extra_asr(out_json_path: Path, lang: str, enabled: bool) -> Non
         ROOT / "steps" / "enrich_segment_hypotheses.py",
         out_json_path,
         "--langs", "gl",
-        "--models", "whisper_large_v3_turbo_gl_v1_0",
+        "--models", "whisper_large_v3_turbo_gl_v1_0", "phi_4_multimodal_instruct_gl_v1_0",
         "--device", "cuda",
         "--overwrite-existing",
     ]
