@@ -6,6 +6,7 @@
 #
 # Usage:
 #   ./run_singularity.sh --input-id PKuuatqwz00 --lang es
+#   ./run_singularity.sh --input-id-file /path/to/ids.txt --lang es   # batch from file
 #   ./run_singularity.sh --lang ca              # batch mode (all pairs in ingestion/)
 #
 # The script automatically binds:
