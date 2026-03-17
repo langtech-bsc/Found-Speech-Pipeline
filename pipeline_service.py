@@ -69,10 +69,10 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.input_id and args.input_id_file:
-        sys.exit("Cannot use both --input-id and --input-id-file")
+        raise ValueError("Cannot use both --input-id and --input-id-file")
 
     if not INGESTION_DIR.exists():
-        sys.exit("ingestion/ directory not found")
+        raise FileNotFoundError("ingestion/ directory not found")
 
     # Create pipeline instance
     pipeline = Pipeline(
@@ -92,11 +92,7 @@ def main() -> None:
         print(f"Processing single audio-transcript pair: {args.input_id}")
         print("=" * 70)
 
-        try:
-            output_path = pipeline.run_all(args.input_id)
-        except Exception as e:
-            sys.exit(str(e))
-
+        output_path = pipeline.run_all(args.input_id)
         print(f"\nPipeline finished. Final JSON file: {output_path}")
 
     # -------------------------------
@@ -104,7 +100,7 @@ def main() -> None:
     # -------------------------------
     elif args.input_id_file:
         if not args.input_id_file.exists():
-            sys.exit(f"Input ID file not found: {args.input_id_file}")
+            raise FileNotFoundError(f"Input ID file not found: {args.input_id_file}")
 
         input_ids = [
             line.strip()
@@ -112,7 +108,7 @@ def main() -> None:
             if line.strip()
         ]
         if not input_ids:
-            sys.exit(f"No IDs found in {args.input_id_file}")
+            raise ValueError(f"No IDs found in {args.input_id_file}")
 
         print(f"\nProcessing {len(input_ids)} IDs from {args.input_id_file}")
         pipeline.run_batch(input_ids=input_ids)
@@ -127,4 +123,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)

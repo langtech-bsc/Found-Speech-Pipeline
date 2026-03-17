@@ -77,21 +77,24 @@ def main() -> None:
     from fsp.core.alignment import generate_final_data
     
     output_name = args.output or f"final_output_{args.input_id}.json"
-    
     try:
         generate_final_data(
-            input_id=args.input_id,
-            lang=args.lang,
-            output_name=output_name,
-            device=args.device,
-            lid_model_path=args.lid_model_path,
+        input_id=args.input_id,
+        lang=args.lang,
+        output_name=output_name,
+        device=args.device,
+        lid_model_path=args.lid_model_path,
             nemo_model_dir=args.nemo_model_dir,
             hf_model_dir=args.hf_model_dir,
         )
     except Exception as e:
-        logging.error("Fatal error: %s", e)
-        sys.exit(str(e))
+        logging.error(f"Error generating final data: {e}")
+        raise e
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logging.error(f"Error: {e}")
+        sys.exit(1)

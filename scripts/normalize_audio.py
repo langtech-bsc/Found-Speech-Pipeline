@@ -10,7 +10,6 @@ CLI wrapper for fsp.core.audio.normalize_audio
 from __future__ import annotations
 
 import argparse
-import sys
 
 # Import core logic from fsp package
 from fsp.core.audio import normalize_audio, select_tsv
@@ -25,12 +24,7 @@ def main() -> None:
     )
     args = p.parse_args()
 
-    try:
-        normalize_audio(args.input_id)
-    except FileNotFoundError as e:
-        sys.exit(str(e))
-    except ValueError as e:
-        sys.exit(str(e))
+    normalize_audio(args.input_id)
 
 
 if __name__ == "__main__":
