@@ -158,7 +158,10 @@ This creates `fsp-pipeline.sif` (~3–4 GB) from the Docker image. Takes ~5–10
 # Single recording
 ./run_singularity.sh --input-id my_recording --lang es
 
-# Batch mode
+# Batch from file (one ID per line, e.g. from create_splits.sh)
+./run_singularity.sh --input-id-file /path/to/ids.txt --lang es
+
+# Batch mode (all pairs in ingestion/)
 ./run_singularity.sh --lang es
 ```
 
@@ -206,7 +209,10 @@ Then run directly:
 # Single recording
 python pipeline_service.py --input-id my_recording --lang es
 
-# Batch mode
+# Batch from file (one ID per line)
+python pipeline_service.py --input-id-file /path/to/ids.txt --lang es
+
+# Batch mode (all pairs in ingestion/)
 python pipeline_service.py --lang es
 ```
 
@@ -319,6 +325,7 @@ The main entry point. Orchestrates all stages.
 | Argument | Description |
 |---|---|
 | `--input-id` | Process a single audio‑transcript pair (optional; omit for batch mode) |
+| `--input-id-file` | Path to file with one input ID per line (for batch processing a subset) |
 | `--lang` | `ca` or `es` (default: `ca`) |
 | `--max-duration` | Maximum segment duration in seconds (default: `30`) |
 | `--lid-model-path` | FastText language-ID model file (default: `$LID_MODEL_PATH` or `utils/models/lid.176.bin`) |
