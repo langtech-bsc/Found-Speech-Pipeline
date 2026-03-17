@@ -9,10 +9,10 @@ CLI wrapper for fsp.core.audio.filter_and_cleanup
 
 import argparse
 import os
-import sys
 
 # Import core logic from fsp package
 from fsp.core.audio import filter_and_cleanup
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -33,5 +33,4 @@ if __name__ == "__main__":
     try:
         main()
     except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        raise Exception(e)

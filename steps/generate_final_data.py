@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
-from fsp.utils.paths import (HF_MODEL_DIR_ENV_VAR, LID_MODEL_PATH_ENV_VAR,
-                             LOG_DIR, NEMO_MODEL_DIR_ENV_VAR)
+from fsp.utils.paths import (
+    HF_MODEL_DIR_ENV_VAR,
+    LID_MODEL_PATH_ENV_VAR,
+    LOG_DIR,
+    NEMO_MODEL_DIR_ENV_VAR,
+)
 
 # Setup logging
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -72,29 +75,28 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    
+
     # Import here to avoid loading heavy deps before arg parsing
     from fsp.core.alignment import generate_final_data
-    
+
     output_name = args.output or f"final_output_{args.input_id}.json"
     try:
         generate_final_data(
-        input_id=args.input_id,
-        lang=args.lang,
-        output_name=output_name,
-        device=args.device,
-        lid_model_path=args.lid_model_path,
+            input_id=args.input_id,
+            lang=args.lang,
+            output_name=output_name,
+            device=args.device,
+            lid_model_path=args.lid_model_path,
             nemo_model_dir=args.nemo_model_dir,
             hf_model_dir=args.hf_model_dir,
         )
     except Exception as e:
-        logging.error(f"Error generating final data: {e}")
-        raise e
+        logging.error("Fatal error: %s", e)
+        raise Exception(e)
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logging.error(f"Error: {e}")
-        sys.exit(1)
+        raise Exception(e)
