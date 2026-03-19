@@ -19,6 +19,8 @@ import argparse
 import glob
 from pathlib import Path
 
+from loguru import logger
+
 # Import core logic from fsp package
 from fsp.core.rover import RoverConfig, process_file
 
@@ -66,11 +68,11 @@ def main() -> None:
         n_chars += n
 
     if n_chars:
-        print("========== OVERALL ==========")
-        print(f"Corpus CER_rover = {sum_cer / n_chars:.2%}")
-        print(f"Corpus WER_rover = {sum_wer / n_chars:.2%}")
+        logger.info("========== OVERALL ==========")
+        logger.info("Corpus CER_rover = {:.2%}", sum_cer / n_chars)
+        logger.info("Corpus WER_rover = {:.2%}", sum_wer / n_chars)
     else:
-        print("No segments processed (language filter?)")
+        logger.warning("No segments processed (language filter?)")
 
 
 # entry-point

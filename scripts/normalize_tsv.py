@@ -12,6 +12,7 @@ import os
 import sys
 
 import pandas as pd
+from loguru import logger
 
 # Import core logic from fsp package
 from fsp.core.text import remove_chars, split_text
@@ -57,7 +58,7 @@ def main():
     df[["wav_path", "text", "normalized_text"]].to_csv(
         out_name, sep="\t", index=False, header=False, quoting=csv.QUOTE_ALL
     )
-    print(f"Normalized TSV written to: {out_name}")
+    logger.info("Normalized TSV written to: {}", out_name)
 
 
 if __name__ == "__main__":

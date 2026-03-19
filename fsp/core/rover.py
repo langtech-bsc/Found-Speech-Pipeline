@@ -16,6 +16,8 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from loguru import logger
+
 # Levenshtein (fast or pure-py)
 try:
     from Levenshtein import distance as edist
@@ -183,12 +185,12 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
     flat_results = [r for sublist in all_results for r in sublist]
 
     if not flat_results:
-        print(f"[{path.name}] No segments found (filtered out?). Skipping.")
+        logger.warning(f"[{path.name}] No segments found (filtered out?). Skipping.")
         return 0.0, 0.0, 0
 
     any_seg = flat_results[0]
     norm_fields = config.fields or sorted(collect_norm_fields(any_seg))
-    print(f"[{path.name}] Merging over {norm_fields}")
+    logger.info(f"[{path.name}] Merging over {norm_fields}")
 
     rows: List[Dict] = []
     tot_chars = err_ro_c = err_ro_w = 0.0
@@ -251,12 +253,12 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
         plt.close()
 
     if tot_chars:
-        print(
+        logger.info(
             f"  CER_rover = {err_ro_c / tot_chars:.2%} | "
             f"WER_rover = {err_ro_w / tot_chars:.2%}\n"
         )
     else:
-        print(f"  (no segments kept for {','.join(sorted(keep_langs))})\n")
+        logger.info(f"  (no segments kept for {','.join(sorted(keep_langs))})\n")
 
     return err_ro_c, err_ro_w, int(tot_chars)
 
