@@ -2,19 +2,15 @@
 """
 generate_final_data.py
 ======================
+Forced alignment + ASR enrichment for **one** audio-transcript pair.
 
-Forced alignment + ASR enrichment for **one** audio-transcript pair
-
-• Segments are language-detected first.
-• For each language we load *one* model at a time → transcribe → unload.
+- Segments are language-detected first.
+- For each language we load one model at a time -> transcribe -> unload.
 """
 
 from __future__ import annotations
 
-# standard library
 import argparse
-import gc
-import json
 import logging
 import re
 import subprocess
@@ -22,7 +18,6 @@ import sys
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
 
 # Suppress the irritating expected warning from using HuggingFace pipelines sequentially
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.pipelines.base")
@@ -36,7 +31,12 @@ from nemo.collections.asr.models.aed_multitask_models import EncDecMultiTaskMode
 from nemo.collections.asr.models.rnnt_bpe_models import EncDecRNNTBPEModel
 from pyctcdecode import build_ctcdecoder
 from transformers import pipeline as hf_pipeline
+import gc
+import json
 import os
+from collections import Counter, defaultdict
+from statistics import mean
+from typing import Any, Dict, List, Sequence, Tuple
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from model_paths import configure_model_env, resolve_fasttext_model
@@ -60,11 +60,28 @@ logging.basicConfig(
 
 # CLI
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser("Generate word-level aligned JSON (one input-id)")
+    p = argparse.ArgumentParser(
+        "Generate word-level aligned JSON (one input-id)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     p.add_argument("--input-id", required=True, help="YouTube video-id to process")
-    p.add_argument("--lang", choices=("ca", "es", "eu", "gl"), default="ca", help="Primary language (only its CTC model is loaded)")
-    p.add_argument("--output", metavar="NAME.json", help="Custom JSON name (default: final_output_<input-id>.json)")
-    p.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto", help="Run ASR on cuda / cpu (default auto)")
+    p.add_argument(
+        "--lang",
+        choices=("ca", "es", "eu", "gl"),
+        default="ca",
+        help="Primary language (only its CTC model is loaded)",
+    )
+    p.add_argument(
+        "--output",
+        metavar="NAME.json",
+        help="Custom JSON name (default: final_output_<input-id>.json)",
+    )
+    p.add_argument(
+        "--device",
+        choices=("auto", "cuda", "cpu"),
+        default="auto",
+        help="Run ASR on cuda / cpu",
+    )
     return p.parse_args()
 
 
@@ -155,11 +172,11 @@ def _find_nemo_file(path: str) -> str | None:
 def _clean_singleton_json_array(txt: str) -> str:
     """
     Some NeMo RNN-T checkpoints return their transcript wrapped like
-    '[\"text\"]' (or "['text']") – i.e. a JSON list encoded as a string.
+    '["text"]' (or "['text']") – i.e. a JSON list encoded as a string.
     Detect and unwrap that safely.
     """
     s = txt.strip()
-    if not (s.startswith('[\"') or s.startswith("['")):
+    if not (s.startswith('["') or s.startswith("['")):
         return s
 
     try:
@@ -293,7 +310,7 @@ def choose_language(text: str, lid, conf_delta: float = 0.2,
     if l1 == "es" and l2 == "ca" and (c1 - c2) < conf_delta:
         return "ca", c2
 
-    catalan_tokens = (" l’", " d’", "ç", " ny", "això", "qüestió")
+    catalan_tokens = (" l'", " d'", "ç", " ny", "això", "qüestió")
     if any(tok in text.lower() for tok in catalan_tokens):
         return "ca", c2 if l2 == "ca" else 0.01
 
@@ -354,7 +371,7 @@ def main() -> None:
     global ARGS
     ARGS = parse_args()
     if not ARGS.output:
-        ARGS.output = f"final_output_{ARGS.session}.json"
+        ARGS.output = f"final_output_{ARGS.input_id}.json"
 
     start = time.perf_counter()
 

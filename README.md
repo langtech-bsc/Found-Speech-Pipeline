@@ -109,6 +109,11 @@ docker run --rm --user $(id -u):$(id -g) \
   fsp-pipeline python pipeline_service.py --lang es
 ```
 
+If your models live outside the repository, pass the explicit runtime paths:
+`--lid-model-path /path/to/lid.176.bin`, `--nemo-model-dir /path/to/nemo`, and
+`--hf-model-dir /path/to/huggingface`. For `run_singularity.sh`, set
+`LID_MODEL_PATH`, `NEMO_MODEL_DIR`, and `HF_MODEL_DIR` before invoking the wrapper.
+
 ### Step 4. Run fully offline (optional)
 
 Once all models are downloaded, you can run with no network access:
@@ -147,11 +152,16 @@ This creates `fsp-pipeline.sif` (~3–4 GB) from the Docker image. Takes ~5–10
 # Single recording
 ./run_singularity.sh --input-id my_recording --lang es
 
-# Batch mode
+# Batch from file (one ID per line, e.g. from create_splits.sh)
+./run_singularity.sh --input-id-file /path/to/ids.txt --lang es
+
+# Batch mode (all pairs in ingestion/)
 ./run_singularity.sh --lang es
 ```
 
-The `run_singularity.sh` wrapper automatically binds `ingestion/`, `inputs/`, `merged/`, and `utils/models/` into the container.
+The `run_singularity.sh` wrapper automatically binds `ingestion/`, `inputs/`, `merged/`,
+`${LID_MODEL_PATH:-utils/models/lid.176.bin}`, `${NEMO_MODEL_DIR:-utils/models/nemo}`,
+and `${HF_MODEL_DIR:-utils/models/huggingface}` into the container.
 
 ---
 
@@ -190,7 +200,10 @@ Then run directly:
 # Single recording
 python pipeline_service.py --input-id my_recording --lang es
 
-# Batch mode
+# Batch from file (one ID per line)
+python pipeline_service.py --input-id-file /path/to/ids.txt --lang es
+
+# Batch mode (all pairs in ingestion/)
 python pipeline_service.py --lang es
 ```
 
@@ -292,14 +305,19 @@ Run any script with `-h` / `--help` for full argument documentation.
 | Argument | Description |
 |---|---|
 | `--input-id` | Process a single audio‑transcript pair (optional; omit for batch mode) |
+| `--input-id-file` | Path to file with one input ID per line (for batch processing a subset) |
 | `--lang` | `ca` or `es` (default: `ca`) |
+| `--max-duration` | Maximum segment duration in seconds (default: `30`) |
+| `--lid-model-path` | FastText language-ID model file (default: `$LID_MODEL_PATH` or `utils/models/lid.176.bin`) |
+| `--nemo-model-dir` | Directory with local NeMo checkpoints (default: `$NEMO_MODEL_DIR` or `utils/models/nemo`) |
+| `--hf-model-dir` | HuggingFace cache root (default: `$HF_MODEL_DIR` or `utils/models/huggingface`) |
 
 ### `scripts/download_models.py`
 
 | Argument | Description |
 |---|---|
 | `--lang` | `ca`, `es`, or `all` (default: `all`) |
-| `--out-dir` | Root output directory (default: `utils/models`) |
+| `--out-dir` | Root output directory (default: `$MODEL_DIR` or `utils/models`) |
 
 ### `steps/generate_final_data.py`
 
@@ -309,6 +327,9 @@ Run any script with `-h` / `--help` for full argument documentation.
 | `--lang` | `ca` or `es` (default: `ca`) |
 | `--output` | Custom JSON filename |
 | `--device` | `cuda`, `cpu`, or `auto` (default: `auto`) |
+| `--lid-model-path` | FastText language-ID model file (default: `$LID_MODEL_PATH` or `utils/models/lid.176.bin`) |
+| `--nemo-model-dir` | Directory with local NeMo checkpoints (default: `$NEMO_MODEL_DIR` or `utils/models/nemo`) |
+| `--hf-model-dir` | HuggingFace cache root (default: `$HF_MODEL_DIR` or `utils/models/huggingface`) |
 
 ### `scripts/rover_merge.py`
 

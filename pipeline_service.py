@@ -5,8 +5,9 @@ pipeline_service.py – orchestrates the FSP pipeline
 
 Modes
 -----
-• Single:  --input-id <id>
-• Batch:   (no --input-id) → auto-detect all valid pairs in ingestion/
+- Single:       --input-id <id>
+- File batch:   --input-id-file <path>  (file with one ID per line)
+- Full batch:   (no --input-id, no --input-id-file) -> auto-detect all valid pairs in ingestion/
 """
 
 from __future__ import annotations
@@ -152,6 +153,8 @@ def process_existing_paired_input(
 def main() -> None:
     ap = argparse.ArgumentParser("Run FSP pipeline from existing WAV+TSV")
     ap.add_argument("--input-id", help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)")
+    ap.add_argument("--input-id-file", type=Path,
+                    help="Path to file with one input ID per line (for batch processing a subset)")
     ap.add_argument("--lang", choices=("ca", "es", "eu", "gl"), default="ca")
     ap.add_argument("--max-duration", type=float, default=30,
                     help="Maximum segment duration in seconds (default: 30)")
@@ -160,16 +163,19 @@ def main() -> None:
 
     args = ap.parse_args()
 
+    if args.input_id and args.input_id_file:
+        raise ValueError("Cannot use both --input-id and --input-id-file")
+
     if not INGESTION_DIR.exists():
-        sys.exit("❌ ingestion/ directory not found")
+        raise FileNotFoundError("ingestion/ directory not found")
 
     # -------------------------------
     # SINGLE MODE
     # -------------------------------
     if args.input_id:
-        print("\n" + "═" * 70)
+        print("\n" + "=" * 70)
         print(f"Processing single audio-transcript pair: {args.input_id}")
-        print("═" * 70)
+        print("=" * 70)
 
         try:
             process_existing_paired_input(
@@ -182,7 +188,39 @@ def main() -> None:
             sys.exit(f"❌ {e}")
 
     # -------------------------------
-    # BATCH MODE
+    # FILE BATCH MODE (--input-id-file)
+    # -------------------------------
+    elif args.input_id_file:
+        if not args.input_id_file.exists():
+            raise FileNotFoundError(f"Input ID file not found: {args.input_id_file}")
+
+        input_ids = [
+            line.strip()
+            for line in args.input_id_file.read_text().splitlines()
+            if line.strip()
+        ]
+        if not input_ids:
+            raise ValueError(f"No IDs found in {args.input_id_file}")
+
+        print(f"\nProcessing {len(input_ids)} IDs from {args.input_id_file}")
+        for i, input_id in enumerate(input_ids, 1):
+            print("\n" + "═" * 70)
+            print(f"[{i}/{len(input_ids)}] Processing {input_id}")
+            print("═" * 70)
+
+            try:
+                process_existing_paired_input(
+                    input_id,
+                    args.lang,
+                    args.max_duration,
+                    enable_gl_extra_asr=not args.skip_gl_extra_asr,
+                )
+            except Exception as e:
+                print(f"❌ Failed: {input_id} → {e}")
+                print("⚠️  Skipping...\n")
+
+    # -------------------------------
+    # FULL BATCH MODE
     # -------------------------------
     else:
         input_ids = find_valid_input_ids()

@@ -1,33 +1,41 @@
 #!/usr/bin/env python3
-import sys
-import os
-import pandas as pd
+"""
+normalize_tsv.py
+================
+Normalize text in a TSV file.
+
+CLI wrapper for fsp.core.text functions.
+"""
+
 import csv
+import os
+import sys
+
+import pandas as pd
+from loguru import logger
+
 from clean_and_split import split_text, remove_chars
 from clean_and_expand import clean_text
 
-def die(msg=""):
-    if msg:
-        sys.stderr.write("Error: " + msg + "\n")
-    sys.stderr.write(f"Usage: python3 {os.path.basename(__file__)} <input_tsv> <lang:ca|es|eu|gl> [mark]\n")
-    sys.exit(1)
+
+def _usage() -> str:
+    return f"Usage: python3 {os.path.basename(__file__)} <input_tsv> <lang:ca|es|eu|gl> [mark]"
 
 def main():
     # Expect 2 or 3 args after the script name
     if not (3 <= len(sys.argv) <= 4):
-        die()
+        raise ValueError(f"Invalid arguments. {_usage()}")
     input_file = sys.argv[1]
-    lang       = sys.argv[2]
-    mark       = sys.argv[3] if len(sys.argv) == 4 else ""
+    lang = sys.argv[2]
+    mark = sys.argv[3] if len(sys.argv) == 4 else ""
 
     if lang not in ("ca", "es", "eu", "gl"):
-        die("lang must be 'ca', 'es', 'eu', or 'gl'")
+        raise ValueError(f"lang must be 'ca', 'es', 'eu', or 'gl'. {_usage()}")
     if not os.path.isfile(input_file):
-        die(f"input file '{input_file}' not found")
+        raise FileNotFoundError(f"input file '{input_file}' not found")
 
     # Load TSV (no header)
-    df = pd.read_csv(input_file, sep="\t", header=None,
-                     names=["wav_path", "text"], dtype=str)
+    df = pd.read_csv(input_file, sep="\t", header=None, names=["wav_path", "text"], dtype=str)
 
     def normalize_row(t, lang, mark):
         # Pre-process text to standardize end of sentences
@@ -47,8 +55,8 @@ def main():
 
     # Build output filename in normalized/ directory
     input_path = os.path.abspath(input_file)
-    filename   = os.path.basename(input_path)
-    base, ext  = os.path.splitext(filename)
+    filename = os.path.basename(input_path)
+    base, ext = os.path.splitext(filename)
 
     out_dir = os.path.join("inputs/normalized", base)
     os.makedirs(out_dir, exist_ok=True)
@@ -59,7 +67,11 @@ def main():
     df[["wav_path", "text", "normalized_text"]].to_csv(
         out_name, sep="\t", index=False, header=False, quoting=csv.QUOTE_ALL
     )
-    print(f"✔ Normalized TSV written to: {out_name}")
+    logger.info("Normalized TSV written to: {}", out_name)
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, FileNotFoundError) as e:
+        raise Exception(e)

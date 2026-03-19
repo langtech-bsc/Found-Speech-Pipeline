@@ -1,10 +1,9 @@
 """
-normalization script, v2
-august 21st 2025
-@carme
+clean_and_expand.py
+===================
+Text normalization (cleaning and expanding) script.
 
-it is the normalizing (cleaning and expanding) function.
-It takes an string and the language and returns a normalized version of the string.
+CLI wrapper for fsp.core.text.clean_text
 
 use:
     python3 clean_and_expand.py -s "<string>" -l "<lang>" <flags>
@@ -12,14 +11,15 @@ use:
 Flags:
     -p: keep punctuation
     -c: keep capitalisation
-    
 """
 
+import os
 import re
 import sys
 import string
 from optparse import OptionParser
-import os
+
+from loguru import logger
 
 
 def replace_chars(text, special_chars):
@@ -69,8 +69,8 @@ def expand_initials(word, letters, onset, coda):
     
 def expand_text(input_text, abreviations, roman_nums, letters, onset, coda):
     input_text = re.sub(r'(?<=[A-Za-z])(?=\d)', " ", re.sub(r'(?<=\d)(?=[A-Za-z])', " ", input_text)) # separates numbers and letters
-    opening_chars = "(¡¿\"«“‘"     
-    closing_chars = ",.;:»”’?!\""
+    opening_chars = "(¡¿\"«"'"     
+    closing_chars = ",.;:»"'?!\""
     tokens = input_text.replace("'", "' ").replace("-", " - ").split()
     for i, t in enumerate(tokens):
         
@@ -97,7 +97,7 @@ def expand_text(input_text, abreviations, roman_nums, letters, onset, coda):
     return output_text.replace("' ", "'").replace(" - ", "-")
 
 def clean_apostrophes(input_text):
-    return re.sub(r'(?<=\w)\'(?!\w)', "’", re.sub(r'(?<!\w)\'(?=\w)', "‘", re.sub(r'(?<=\w)’(?=\w)', "'", input_text)))
+    return re.sub(r'(?<=\w)\'(?!\w)', "'", re.sub(r'(?<!\w)\'(?=\w)', "'", re.sub(r'(?<=\w)\u2019(?=\w)', "'", input_text)))
 
 def clean_text(input_text, lang, punctuation, capitalisation):
     # Ensure project root is on sys.path so `from scripts.*` imports work
@@ -161,7 +161,7 @@ def clean_text(input_text, lang, punctuation, capitalisation):
 
     accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -|"
     if punctuation==True:
-        accepted_chars+= ",()¡¿\"«»“”‘’;.?!:…"
+        accepted_chars+= ",()¡¿\"«»""'';.?!:…"
     if capitalisation==True:
         clean_text = ''.join(char if char.lower() in accepted_chars else ' ' for char in expanded_text) #removing remainig special chars
     else:
@@ -171,23 +171,25 @@ def clean_text(input_text, lang, punctuation, capitalisation):
 
 
 def main(argv=None):
-
-    
     parser = OptionParser()
-    parser.add_option("-s", "--sent", dest="sent",  action="store", help="sentence to normalize")    
-    parser.add_option("-l", "--lang", dest="lang",  action="store", help="language")    
-    
-    parser.add_option("-p", "--punt", dest="punt",  action="store_true", help="keep punctuation", default =False)
-    parser.add_option("-c", "--cap", dest="cap",  action="store_true", help="keep capitalisation", default =False)
-    
-    (options, args) = parser.parse_args(argv)
+    parser.add_option("-s", "--sent", dest="sent", action="store", help="sentence to normalize")
+    parser.add_option("-l", "--lang", dest="lang", action="store", help="language")
+    parser.add_option(
+        "-p", "--punt", dest="punt", action="store_true", help="keep punctuation", default=False
+    )
+    parser.add_option(
+        "-c", "--cap", dest="cap", action="store_true", help="keep capitalisation", default=False
+    )
+
+    options, args = parser.parse_args(argv)
 
     sent = options.sent
     lang = options.lang
     punctuation = options.punt
     capitalisation = options.cap
-    print(sent)
-    print(clean_text(sent, lang, punctuation, capitalisation))
-		
+    logger.info("{}", sent)
+    logger.info("{}", clean_text(sent, lang, punctuation, capitalisation))
+
+
 if __name__ == "__main__":
     main()
