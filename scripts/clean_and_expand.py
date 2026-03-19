@@ -69,8 +69,8 @@ def expand_initials(word, letters, onset, coda):
     
 def expand_text(input_text, abreviations, roman_nums, letters, onset, coda):
     input_text = re.sub(r'(?<=[A-Za-z])(?=\d)', " ", re.sub(r'(?<=\d)(?=[A-Za-z])', " ", input_text)) # separates numbers and letters
-    opening_chars = "(¡¿\"«"'"     
-    closing_chars = ",.;:»"'?!\""
+    opening_chars = "(¡¿\"«“‘"     
+    closing_chars = ",.;:»”’?!\""
     tokens = input_text.replace("'", "' ").replace("-", " - ").split()
     for i, t in enumerate(tokens):
         
@@ -161,7 +161,7 @@ def clean_text(input_text, lang, punctuation, capitalisation):
 
     accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -|"
     if punctuation==True:
-        accepted_chars+= ",()¡¿\"«»""'';.?!:…"
+        accepted_chars+= ",()¡¿\"«»“”‘’;.?!:…"
     if capitalisation==True:
         clean_text = ''.join(char if char.lower() in accepted_chars else ' ' for char in expanded_text) #removing remainig special chars
     else:
