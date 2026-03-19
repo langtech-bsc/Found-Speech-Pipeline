@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Union
 
 import torch
+from loguru import logger
 
 from fsp.utils.paths import (
     HF_MODEL_DIR_ENV_VAR,
@@ -120,17 +121,17 @@ def download_nemo_ctc(model_name: str, out_dir: Path) -> None:
     """
     out_path = out_dir / f"{model_name}.nemo"
     if out_path.exists():
-        print(f"  Already exists: {out_path}")
+        logger.info(f"  Already exists: {out_path}")
         return
 
     import nemo.collections.asr as nemo_asr
 
-    print(f"  Downloading NeMo model: {model_name} ...")
+    logger.info(f"  Downloading NeMo model: {model_name} ...")
     model = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(model_name)
 
     # Save to our local directory
     model.save_to(str(out_path))
-    print(f"  Saved to: {out_path}")
+    logger.info(f"  Saved to: {out_path}")
 
     # Clean up RAM
     unload_model(model)
@@ -153,12 +154,12 @@ def download_hf_model(repo_id: str, hf_home: Path) -> None:
     cache_name = repo_id.replace("/", "--")
     model_dir = hf_home / "hub" / f"models--{cache_name}"
     if model_dir.exists():
-        print(f"  Already cached: {repo_id}")
+        logger.info(f"  Already cached: {repo_id}")
         return
 
-    print(f"  Downloading HuggingFace model: {repo_id} ...")
+    logger.info(f"  Downloading HuggingFace model: {repo_id} ...")
     snapshot_download(repo_id)
-    print(f"  Cached: {repo_id}")
+    logger.info(f"  Cached: {repo_id}")
 
 
 __all__ = [

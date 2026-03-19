@@ -15,6 +15,8 @@ Flags:
 
 from optparse import OptionParser
 
+from loguru import logger
+
 # Import core logic from fsp package
 from fsp.core.text import clean_text
 
@@ -36,8 +38,8 @@ def main(argv=None):
     lang = options.lang
     punctuation = options.punt
     capitalisation = options.cap
-    print(sent)
-    print(clean_text(sent, lang, punctuation, capitalisation))
+    logger.info("{}", sent)
+    logger.info("{}", clean_text(sent, lang, punctuation, capitalisation))
 
 
 if __name__ == "__main__":

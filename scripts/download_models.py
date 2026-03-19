@@ -22,6 +22,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from loguru import logger
+
 # Import core logic from fsp package
 from fsp.utils.models import download_hf_model, download_nemo_ctc
 from fsp.utils.paths import MODEL_DIR_ENV_VAR, MODELS_DIR
@@ -72,23 +74,23 @@ def main() -> None:
     nemo_dir.mkdir(parents=True, exist_ok=True)
     hf_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Model output directory: {args.out_dir.resolve()}")
-    print(f"Languages: {', '.join(langs)}\n")
+    logger.info("Model output directory: {}", args.out_dir.resolve())
+    logger.info("Languages: {}\n", ", ".join(langs))
 
     # 1. NeMo CTC models
     for lang in langs:
         model_name = NEMO_CTC_MODELS[lang]
-        print(f"[NeMo CTC] {model_name}")
+        logger.info("[NeMo CTC] {}", model_name)
         download_nemo_ctc(model_name, nemo_dir)
 
     # 2. HuggingFace models
     for lang in langs:
         for repo_id in HF_MODELS[lang]:
-            print(f"[HuggingFace] {repo_id}")
+            logger.info("[HuggingFace] {}", repo_id)
             download_hf_model(repo_id, hf_dir)
 
-    print(f"\nAll models downloaded to {args.out_dir.resolve()}")
-    print("Mount this directory into the container at /app/utils/models for offline use.")
+    logger.info("\nAll models downloaded to {}", args.out_dir.resolve())
+    logger.info("Mount this directory into the container at /app/utils/models for offline use.")
 
 
 if __name__ == "__main__":
