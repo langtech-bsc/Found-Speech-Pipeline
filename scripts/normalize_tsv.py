@@ -12,32 +12,28 @@ import os
 import sys
 
 import pandas as pd
+from loguru import logger
 
 # Import core logic from fsp package
 from fsp.core.text import remove_chars, split_text
 
 
-def die(msg=""):
-    if msg:
-        sys.stderr.write("Error: " + msg + "\n")
-    sys.stderr.write(
-        f"Usage: python3 {os.path.basename(__file__)} <input_tsv> <lang:ca|es> [mark]\n"
-    )
-    sys.exit(1)
+def _usage() -> str:
+    return f"Usage: python3 {os.path.basename(__file__)} <input_tsv> <lang:ca|es> [mark]"
 
 
 def main():
     # Expect 2 or 3 args after the script name
     if not (3 <= len(sys.argv) <= 4):
-        die()
+        raise ValueError(f"Invalid arguments. {_usage()}")
     input_file = sys.argv[1]
     lang = sys.argv[2]
     mark = sys.argv[3] if len(sys.argv) == 4 else ""
 
     if lang not in ("ca", "es"):
-        die("lang must be 'ca' or 'es'")
+        raise ValueError(f"lang must be 'ca' or 'es'. {_usage()}")
     if not os.path.isfile(input_file):
-        die(f"input file '{input_file}' not found")
+        raise FileNotFoundError(f"input file '{input_file}' not found")
 
     # Load TSV (no header)
     df = pd.read_csv(input_file, sep="\t", header=None, names=["wav_path", "text"], dtype=str)
@@ -62,8 +58,11 @@ def main():
     df[["wav_path", "text", "normalized_text"]].to_csv(
         out_name, sep="\t", index=False, header=False, quoting=csv.QUOTE_ALL
     )
-    print(f"Normalized TSV written to: {out_name}")
+    logger.info("Normalized TSV written to: {}", out_name)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, FileNotFoundError) as e:
+        raise Exception(e)

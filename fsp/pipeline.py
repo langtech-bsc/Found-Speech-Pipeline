@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import pandas as pd
+from loguru import logger
 
 from fsp.core.alignment import generate_final_data
 from fsp.core.audio import filter_and_cleanup
@@ -97,7 +98,7 @@ class Pipeline:
         df[["wav_path", "text", "normalized_text"]].to_csv(
             out_name, sep="\t", index=False, header=False, quoting=csv.QUOTE_ALL
         )
-        print(f"Normalized TSV written to: {out_name}")
+        logger.info(f"Normalized TSV written to: {out_name}")
         return out_name
 
     def normalize_audio(self, input_id: str) -> Path:
@@ -208,23 +209,23 @@ class Pipeline:
         out_json_path = OUTPUT_SEGMENT_DIR / out_json_name
 
         # 1. Normalize TSV
-        print("\nStep 1/5: Normalize TSV")
+        logger.info("\nStep 1/5: Normalize TSV")
         self.normalize_tsv(raw_tsv, self.lang)
 
         # 2. Normalize audio + metadata
-        print("\nStep 2/5: Normalize audio")
+        logger.info("\nStep 2/5: Normalize audio")
         self.normalize_audio(input_id)
 
         # 3. Generate final data
-        print("\nStep 3/5: Generate final data")
+        logger.info("\nStep 3/5: Generate final data")
         self.generate_final_data(input_id, output_name=out_json_name)
 
         # 4. Duration filter
-        print("\nStep 4/5: Duration filter")
+        logger.info("\nStep 4/5: Duration filter")
         self.duration_filter(out_json_path)
 
         # 5. ROVER merge
-        print("\nStep 5/5: ROVER merge")
+        logger.info("\nStep 5/5: ROVER merge")
         self.rover_merge(out_json_path)
 
         return out_json_path
@@ -243,9 +244,9 @@ class Pipeline:
         valid_ids = sorted(wav_ids & tsv_ids)
 
         if not valid_ids:
-            print("No valid (.wav + .tsv) pairs found in ingestion/")
+            logger.warning("No valid (.wav + .tsv) pairs found in ingestion/")
         else:
-            print(f"Found {len(valid_ids)} valid input pair(s)")
+            logger.info(f"Found {len(valid_ids)} valid input pair(s)")
 
         return valid_ids
 
@@ -264,16 +265,16 @@ class Pipeline:
 
         results = []
         for i, input_id in enumerate(input_ids, 1):
-            print("\n" + "=" * 70)
-            print(f"[{i}/{len(input_ids)}] Processing {input_id}")
-            print("=" * 70)
+            logger.info("\n" + "=" * 70)
+            logger.info(f"[{i}/{len(input_ids)}] Processing {input_id}")
+            logger.info("=" * 70)
 
             try:
                 result = self.run_all(input_id)
                 results.append(result)
             except Exception as e:
-                print(f"Failed: {input_id} -> {e}")
-                print("Skipping.\n")
+                logger.error(f"Failed: {input_id} -> {e}")
+                logger.warning("Skipping.\n")
 
         return results
 

@@ -9,12 +9,12 @@ CLI wrapper for fsp.core.audio.filter_and_cleanup
 
 import argparse
 import os
-import sys
 
 # Import core logic from fsp package
 from fsp.core.audio import filter_and_cleanup
 
-if __name__ == "__main__":
+
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Filter segments in a JSON file by duration and optionally delete files outside the range."
     )
@@ -24,7 +24,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if not os.path.isfile(args.json_file):
-        print(f"Error: file not found: {args.json_file}")
-        sys.exit(1)
+        raise FileNotFoundError(f"file not found: {args.json_file}")
 
     filter_and_cleanup(args.json_file, min_dur=args.min, max_dur=args.max)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except FileNotFoundError as e:
+        raise Exception(e)

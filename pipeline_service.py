@@ -5,14 +5,14 @@ pipeline_service.py – orchestrates the FSP pipeline
 
 Modes
 -----
-- Single:  --input-id <id>
-- Batch:   (no --input-id) -> auto-detect all valid pairs in ingestion/
+- Single:       --input-id <id>
+- File batch:   --input-id-file <path>  (file with one ID per line)
+- Full batch:   (no --input-id, no --input-id-file) -> auto-detect all valid pairs in ingestion/
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 # Import the Pipeline class from fsp package
@@ -30,6 +30,11 @@ def main() -> None:
     ap.add_argument(
         "--input-id",
         help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)",
+    )
+    ap.add_argument(
+        "--input-id-file",
+        type=Path,
+        help="Path to file with one input ID per line (for batch processing a subset)",
     )
     ap.add_argument("--lang", choices=("ca", "es"), default="ca")
     ap.add_argument(
@@ -62,8 +67,11 @@ def main() -> None:
 
     args = ap.parse_args()
 
+    if args.input_id and args.input_id_file:
+        raise ValueError("Cannot use both --input-id and --input-id-file")
+
     if not INGESTION_DIR.exists():
-        sys.exit("ingestion/ directory not found")
+        raise FileNotFoundError("ingestion/ directory not found")
 
     # Create pipeline instance
     pipeline = Pipeline(
@@ -83,15 +91,30 @@ def main() -> None:
         print(f"Processing single audio-transcript pair: {args.input_id}")
         print("=" * 70)
 
-        try:
-            output_path = pipeline.run_all(args.input_id)
-        except Exception as e:
-            sys.exit(str(e))
-
+        output_path = pipeline.run_all(args.input_id)
         print(f"\nPipeline finished. Final JSON file: {output_path}")
 
     # -------------------------------
-    # BATCH MODE
+    # FILE BATCH MODE (--input-id-file)
+    # -------------------------------
+    elif args.input_id_file:
+        if not args.input_id_file.exists():
+            raise FileNotFoundError(f"Input ID file not found: {args.input_id_file}")
+
+        input_ids = [
+            line.strip()
+            for line in args.input_id_file.read_text().splitlines()
+            if line.strip()
+        ]
+        if not input_ids:
+            raise ValueError(f"No IDs found in {args.input_id_file}")
+
+        print(f"\nProcessing {len(input_ids)} IDs from {args.input_id_file}")
+        pipeline.run_batch(input_ids=input_ids)
+        print(f"\nPipeline finished. Final JSON files are in {OUTPUT_SEGMENT_DIR}")
+
+    # -------------------------------
+    # FULL BATCH MODE
     # -------------------------------
     else:
         pipeline.run_batch()
@@ -99,4 +122,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, FileNotFoundError) as e:
+        raise Exception(e)

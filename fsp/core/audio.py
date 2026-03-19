@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+from loguru import logger
 
 from fsp.utils.paths import FFMPEG_CMD, INGESTION_DIR, NORM_DIR, OUT_DIR
 
@@ -112,7 +113,7 @@ def normalize_audio(
     }
     meta_path.write_text(json.dumps([entry], ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"Normalized audio and metadata written to: {output_dir / input_id}")
+    logger.info(f"Normalized audio and metadata written to: {output_dir / input_id}")
     return output_dir / input_id
 
 
@@ -159,9 +160,9 @@ def filter_and_cleanup(json_path: str, min_dur: float = 2, max_dur: float = 30) 
                 if seg_path and os.path.isfile(seg_path):
                     try:
                         os.remove(seg_path)
-                        print(f"Deleted file: {seg_path}")
+                        logger.info(f"Deleted file: {seg_path}")
                     except Exception as e:
-                        print(f"Warning: could not delete {seg_path}: {e}")
+                        logger.warning(f"Could not delete {seg_path}: {e}")
                 # Skip adding this segment to filtered_results
             else:
                 # Duration is in the allowed range; keep it
@@ -174,7 +175,7 @@ def filter_and_cleanup(json_path: str, min_dur: float = 2, max_dur: float = 30) 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-    print(f"Filtering complete. Updated JSON written to: {json_path}")
+    logger.info(f"Filtering complete. Updated JSON written to: {json_path}")
 
 
 __all__ = [

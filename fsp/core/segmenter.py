@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, List
 import pandas as pd
 import soundfile as sf
 from jiwer import cer
+from loguru import logger
 
 if TYPE_CHECKING:
     import fasttext
@@ -131,7 +132,7 @@ class Segmenter:
         out_file = os.path.join(self.out_path, file_name)
 
         if os.path.isfile(out_file):
-            print(f"{out_file} already exists – skipping")
+            logger.debug(f"{out_file} already exists – skipping")
         else:
             cmd = [
                 "ffmpeg",
@@ -155,7 +156,7 @@ class Segmenter:
 
         # Validate the produced file
         if not os.path.isfile(out_file):
-            print(f"ffmpeg failed for {out_file}")
+            logger.error(f"ffmpeg failed for {out_file}")
             return None
         info = sf.info(out_file)
         if info.frames == 0:
