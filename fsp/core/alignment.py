@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 import torch
+from loguru import logger
 
 from fsp.core.text import clean_text
 from fsp.utils.language import choose_language
@@ -264,7 +265,7 @@ def generate_final_data(
     local_nemo = model_paths.nemo_model_dir / f"{primary_model_name}.nemo"
 
     if local_nemo.is_file():
-        print(f"Loading local NeMo model: {local_nemo}")
+        logger.info(f"Loading local NeMo model: {local_nemo}")
         primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
     else:
         primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(primary_model_name)
@@ -327,7 +328,7 @@ def generate_final_data(
 
     # 3. ASR per-language, one model at a time
     for seg_lang, segs in buckets.items():
-        print(f"\nProcessing language: {seg_lang}, number of segments: {len(segs)}")
+        logger.info(f"\nProcessing language: {seg_lang}, number of segments: {len(segs)}")
         if not segs:
             continue
         for name, kind, repo in MODELS_BY_LANG[seg_lang]:
@@ -341,7 +342,7 @@ def generate_final_data(
                     nemo_model_dir=model_paths.nemo_model_dir,
                     hf_model_dir=model_paths.hf_model_dir,
                 )
-                print(f"Model {name} loaded on device {resolved_device}")
+                logger.info(f"Model {name} loaded on device {resolved_device}")
                 for r in segs:
                     key = f"pred_text_{name}"
                     norm_key = f"norm_text_{name}"
@@ -361,14 +362,14 @@ def generate_final_data(
                         r[norm_key] = ""
             except Exception as err:
                 logging.warning("Could not load model %s (%s): %s — skipping", name, repo, err)
-                print(f"Skipping model {name}: {err}")
+                logger.warning(f"Skipping model {name}: {err}")
             finally:
                 unload_model(model)
 
     # 4. Write JSON
     final_fp = OUTPUT_SEGMENT_DIR / output_name
     final_fp.write_text(json.dumps(combined, indent=2, ensure_ascii=False))
-    print(f"JSON written to {final_fp} ({time.perf_counter() - start:.1f}s)")
+    logger.info(f"JSON written to {final_fp} ({time.perf_counter() - start:.1f}s)")
 
     return final_fp
 

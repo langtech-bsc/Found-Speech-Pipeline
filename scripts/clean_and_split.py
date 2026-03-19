@@ -13,6 +13,8 @@ use:
 
 import sys
 
+from loguru import logger
+
 # Import core logic from fsp package
 from fsp.core.text import process_tsv, process_txt, remove_chars, split_text
 
@@ -23,16 +25,18 @@ def main():
     if len(sys.argv) == 3:
         if sys.argv[2] == "-p":
             punctuation = True
-    print(input_path)
+    logger.info("{}", input_path)
     mark = "#"
     if input_path[-4:] == ".txt":
         output_file = process_txt(input_path, punctuation)
-        print(f"Results saved in {output_file}")
+        logger.info("Results saved in {}", output_file)
     elif input_path[-4:] == ".tsv" or input_path[-4:] == ".csv":
         output_file = process_tsv(input_path, punctuation)
-        print(f"Results saved in {output_file}")
+        logger.info("Results saved in {}", output_file)
     else:
-        print(split_text(remove_chars(input_path, punctuation, "ca"), punctuation, mark))
+        logger.info(
+            "{}", split_text(remove_chars(input_path, punctuation, "ca"), punctuation, mark)
+        )
 
 
 if __name__ == "__main__":
