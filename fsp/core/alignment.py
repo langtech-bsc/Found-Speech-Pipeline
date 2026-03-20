@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 import torch
 from loguru import logger
 
-from fsp.core.text import clean_text
+from fsp.core.text import clean_apostrophes, clean_text
 from fsp.utils.language import choose_language
 from fsp.utils.models import configure_model_environment, load_model, unload_model
 from fsp.utils.paths import (
@@ -133,7 +133,9 @@ def transcribe(model: Any, kind: str, audio: str, lang: str = "ca") -> str:
         out = model.transcribe([audio], batch_size=1)[0]
         txt = out if isinstance(out, str) else getattr(out, "text", str(out))
 
-    return _clean_singleton_json_array(txt)
+    # Canonicalize apostrophes in raw ASR output so pred_text_* fields do not
+    # mix ASCII and typographic variants across segments/models.
+    return clean_apostrophes(_clean_singleton_json_array(txt))
 
 
 def hhmmss_to_sec(t: str | int | float) -> float:
