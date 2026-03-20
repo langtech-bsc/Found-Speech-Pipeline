@@ -6,14 +6,11 @@ Utility modules for the FSP pipeline.
 - models: Model loading/unloading utilities
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 from fsp.utils.language import choose_language
-from fsp.utils.models import (
-    configure_model_environment,
-    download_hf_model,
-    download_nemo_ctc,
-    load_model,
-    unload_model,
-)
 from fsp.utils.paths import (
     HF_MODEL_DIR,
     HF_MODEL_DIR_ENV_VAR,
@@ -33,6 +30,7 @@ from fsp.utils.paths import (
     resolve_hf_model_dir,
     resolve_lid_model_path,
     resolve_model_dir,
+    resolve_model_reference,
     resolve_model_paths,
     resolve_nemo_model_dir,
 )
@@ -52,6 +50,7 @@ __all__ = [
     "resolve_lid_model_path",
     "resolve_nemo_model_dir",
     "resolve_hf_model_dir",
+    "resolve_model_reference",
     "resolve_model_paths",
     "SCRIPTS_DIR",
     "STEPS_DIR",
@@ -68,3 +67,17 @@ __all__ = [
     "download_nemo_ctc",
     "download_hf_model",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {
+        "configure_model_environment",
+        "load_model",
+        "unload_model",
+        "download_nemo_ctc",
+        "download_hf_model",
+    }:
+        from fsp.utils import models as _models
+
+        return getattr(_models, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

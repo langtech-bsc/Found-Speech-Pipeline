@@ -8,24 +8,9 @@ Core processing modules for the FSP pipeline.
 - segmenter: Audio segmentation
 """
 
-from fsp.core.alignment import (
-    CTC_MODELS,
-    MODELS_BY_LANG,
-    build_manifest,
-    generate_final_data,
-    transcribe,
-)
-from fsp.core.audio import filter_and_cleanup, normalize_audio, select_tsv
-from fsp.core.rover import RoverConfig, centroid, cer, majority_vote, process_file, wer
-from fsp.core.segmenter import Segmenter
-from fsp.core.text import (
-    clean_text,
-    expand_text,
-    numbers_to_chars,
-    remove_chars,
-    replace_chars,
-    split_text,
-)
+from __future__ import annotations
+
+from typing import Any
 
 __all__ = [
     # text
@@ -55,3 +40,27 @@ __all__ = [
     # segmenter
     "Segmenter",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"CTC_MODELS", "MODELS_BY_LANG", "build_manifest", "generate_final_data", "transcribe"}:
+        from fsp.core import alignment as _alignment
+
+        return getattr(_alignment, name)
+    if name in {"filter_and_cleanup", "normalize_audio", "select_tsv"}:
+        from fsp.core import audio as _audio
+
+        return getattr(_audio, name)
+    if name in {"RoverConfig", "centroid", "cer", "majority_vote", "process_file", "wer"}:
+        from fsp.core import rover as _rover
+
+        return getattr(_rover, name)
+    if name == "Segmenter":
+        from fsp.core.segmenter import Segmenter
+
+        return Segmenter
+    if name in {"clean_text", "expand_text", "numbers_to_chars", "remove_chars", "replace_chars", "split_text"}:
+        from fsp.core import text as _text
+
+        return getattr(_text, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

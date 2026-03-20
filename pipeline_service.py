@@ -11,155 +11,67 @@ Modes
 """
 
 from __future__ import annotations
-import argparse, os, subprocess, sys
+
+import argparse
 from pathlib import Path
-from shutil import which
-from typing import List
 
-# project paths
-ROOT          = Path(__file__).resolve().parent
-SCRIPTS_DIR   = ROOT / "scripts"
-INGESTION_DIR = ROOT / "ingestion"
-STEPS_DIR     = ROOT / "steps"
-ROVER_DIR     = ROOT / "merged"
-GL_EXTRA_ASR_IMAGE = ROOT / "gl-extra-asr.sif"
-SINGULARITY_FALLBACK = Path("/apps/GPP/SINGULARITY/3.11.5/bin/singularity")
-ROVER_DIR.mkdir(exist_ok=True, parents=True)
-
-PY = sys.executable
-
-# -------------------------------------------------
-# Helpers
-# -------------------------------------------------
-
-def run(label: str,
-        cmd:  List[str | Path],
-        cwd:  Path | None = None,
-        env:  dict | None = None) -> None:
-    txt = " ".join(str(c) for c in cmd)
-    print(f"\n► {label}\n  $ {txt}")
-    if subprocess.run(cmd, cwd=cwd, env=env).returncode:
-        sys.exit(f"✖  {label} failed")
+from fsp.pipeline import Pipeline
+from fsp.utils.paths import (
+    HF_MODEL_DIR_ENV_VAR,
+    INGESTION_DIR,
+    LID_MODEL_PATH_ENV_VAR,
+    NEMO_MODEL_DIR_ENV_VAR,
+    ROVER_DIR,
+)
 
 
-def maybe_run_gl_extra_asr(out_json_path: Path, lang: str, enabled: bool) -> None:
-    if lang != "gl" or not enabled:
-        return
-
-    runner = which("apptainer") or which("singularity")
-    if not runner and SINGULARITY_FALLBACK.is_file():
-        runner = str(SINGULARITY_FALLBACK)
-    if not runner:
-        raise RuntimeError("Neither 'apptainer' nor 'singularity' is available")
-    if not GL_EXTRA_ASR_IMAGE.is_file():
-        raise RuntimeError(f"Missing GL extra ASR image: {GL_EXTRA_ASR_IMAGE}")
-
-    env = os.environ.copy()
-    env.setdefault("MODELS_ROOT", "/gpfs/projects/bsc88/speech/ASR/models")
-    models_root = Path(env["MODELS_ROOT"])
-    if not models_root.is_dir():
-        raise RuntimeError(f"Models root not found: {models_root}")
-
-    cmd: List[str | Path] = [
-        runner,
-        "exec",
-        "--nv",
-        "--bind", f"{ROOT}:{ROOT}",
-        "--bind", f"{models_root}:{models_root}",
-        GL_EXTRA_ASR_IMAGE,
-        "python",
-        ROOT / "steps" / "enrich_segment_hypotheses.py",
-        out_json_path,
-        "--langs", "gl",
-        "--models", "whisper_large_v3_turbo_gl_v1_0", "phi_4_multimodal_instruct_gl_v1_0",
-        "--device", "cuda",
-        "--overwrite-existing",
-    ]
-    run("GL extra ASR enrichment", cmd, env=env)
-
-def find_valid_input_ids() -> list[str]:
-    """
-    Scan ingestion/ and return all valid audio-transcript pair IDs
-    (that have BOTH .wav and .tsv files).
-    """
-    wav_ids = {p.stem for p in INGESTION_DIR.glob("*.wav")}
-    tsv_ids = {p.stem for p in INGESTION_DIR.glob("*.tsv")}
-
-    valid_ids = sorted(wav_ids & tsv_ids)
-
-    if not valid_ids:
-        print("⚠️  No valid (.wav + .tsv) pairs found in ingestion/")
-    else:
-        print(f"🔎 Found {len(valid_ids)} valid input pair(s)")
-
-    return valid_ids
-
-
-
-# -------------------------------------------------
-# Pipeline
-# -------------------------------------------------
-
-def process_existing_paired_input(
-    input_id: str,
-    lang: str,
-    max_dur: float = 30,
-    enable_gl_extra_asr: bool = True,
-) -> None:
-
-    raw_tsv = INGESTION_DIR / f"{input_id}.tsv"
-    raw_wav = INGESTION_DIR / f"{input_id}.wav"
-
-    if not raw_tsv.exists() or not raw_wav.exists():
-        raise RuntimeError(f"Missing pair for input ID: {input_id}")
-
-    out_json_name = f"final_output_{input_id}.json"
-    out_json_path = ROOT / "inputs" / "output_segment" / out_json_name
-    
-    # 1️⃣ Normalize TSV
-    run("Normalise TSV",
-        [PY, SCRIPTS_DIR / "normalize_tsv.py", raw_tsv, lang, "|"])
-
-    # 2️⃣ Normalize audio + metadata 
-    run("Ingest single",
-        [PY, SCRIPTS_DIR / "normalize_audio.py", f"--input-id={input_id}"])
-
-    # 3️⃣ Generate final data (aligner runs on CPU internally, but ASR can use GPU)
-    run("Generate final data",
-        [PY, STEPS_DIR / "generate_final_data.py",
-         f"--input-id={input_id}", f"--lang={lang}", "--output", out_json_name])
-
-    # 4️⃣ Optional GL-only sidecar enrichment on GPU
-    maybe_run_gl_extra_asr(out_json_path, lang, enable_gl_extra_asr)
-
-    # 5️⃣ Duration filter
-    run("Duration filter",
-        [PY, SCRIPTS_DIR / "duration_filter.py", out_json_path, "--max", str(max_dur)])
-
-    # 6️⃣ ROVER merge
-    run("ROVER merge",
-        [PY, SCRIPTS_DIR / "rover_merge.py",
-         out_json_path, "--csv", "--plot", "--out-dir", ROVER_DIR])
-
-    # 7️⃣ Punctuation & Capitalization restoration
-    rover_json = ROVER_DIR / f"final_output_{input_id}.json"
-    run("Punctuation & Capitalization",
-        [PY, SCRIPTS_DIR / "punctuate.py", rover_json])
-
-
-# -------------------------------------------------
-# CLI
-# -------------------------------------------------
 def main() -> None:
-    ap = argparse.ArgumentParser("Run FSP pipeline from existing WAV+TSV")
-    ap.add_argument("--input-id", help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)")
-    ap.add_argument("--input-id-file", type=Path,
-                    help="Path to file with one input ID per line (for batch processing a subset)")
+    ap = argparse.ArgumentParser(
+        "Run FSP pipeline from existing WAV+TSV",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ap.add_argument(
+        "--input-id",
+        help="Process a single audio-transcript pair (WAV+TSV filename stem in ingestion)",
+    )
+    ap.add_argument(
+        "--input-id-file",
+        type=Path,
+        help="Path to file with one input ID per line (for batch processing a subset)",
+    )
     ap.add_argument("--lang", choices=("ca", "es", "eu", "gl"), default="ca")
-    ap.add_argument("--max-duration", type=float, default=30,
-                    help="Maximum segment duration in seconds (default: 30)")
-    ap.add_argument("--skip-gl-extra-asr", action="store_true",
-                    help="Skip the GL-specific Apptainer enrichment step")
+    ap.add_argument(
+        "--max-duration",
+        type=float,
+        default=30,
+        help="Maximum segment duration in seconds",
+    )
+    ap.add_argument(
+        "--min-duration",
+        type=float,
+        default=2,
+        help="Minimum segment duration in seconds",
+    )
+    ap.add_argument(
+        "--lid-model-path",
+        type=Path,
+        help=f"Path to lid.176.bin (default: ${LID_MODEL_PATH_ENV_VAR} or utils/models/lid.176.bin)",
+    )
+    ap.add_argument(
+        "--nemo-model-dir",
+        type=Path,
+        help=f"Directory containing local NeMo checkpoints (default: ${NEMO_MODEL_DIR_ENV_VAR})",
+    )
+    ap.add_argument(
+        "--hf-model-dir",
+        type=Path,
+        help=f"Directory containing the HuggingFace cache root (default: ${HF_MODEL_DIR_ENV_VAR})",
+    )
+    ap.add_argument(
+        "--skip-gl-extra-asr",
+        action="store_true",
+        help="Skip the GL-specific Apptainer enrichment step",
+    )
 
     args = ap.parse_args()
 
@@ -169,27 +81,23 @@ def main() -> None:
     if not INGESTION_DIR.exists():
         raise FileNotFoundError("ingestion/ directory not found")
 
-    # -------------------------------
-    # SINGLE MODE
-    # -------------------------------
+    pipeline = Pipeline(
+        lang=args.lang,
+        max_duration=args.max_duration,
+        min_duration=args.min_duration,
+        lid_model_path=args.lid_model_path,
+        nemo_model_dir=args.nemo_model_dir,
+        hf_model_dir=args.hf_model_dir,
+        enable_gl_extra_asr=not args.skip_gl_extra_asr,
+    )
+
     if args.input_id:
         print("\n" + "=" * 70)
         print(f"Processing single audio-transcript pair: {args.input_id}")
         print("=" * 70)
 
-        try:
-            process_existing_paired_input(
-                args.input_id,
-                args.lang,
-                args.max_duration,
-                enable_gl_extra_asr=not args.skip_gl_extra_asr,
-            )
-        except Exception as e:
-            sys.exit(f"❌ {e}")
-
-    # -------------------------------
-    # FILE BATCH MODE (--input-id-file)
-    # -------------------------------
+        output_path = pipeline.run_all(args.input_id)
+        print(f"\nPipeline finished. Final JSON file: {output_path}")
     elif args.input_id_file:
         if not args.input_id_file.exists():
             raise FileNotFoundError(f"Input ID file not found: {args.input_id_file}")
@@ -203,46 +111,11 @@ def main() -> None:
             raise ValueError(f"No IDs found in {args.input_id_file}")
 
         print(f"\nProcessing {len(input_ids)} IDs from {args.input_id_file}")
-        for i, input_id in enumerate(input_ids, 1):
-            print("\n" + "═" * 70)
-            print(f"[{i}/{len(input_ids)}] Processing {input_id}")
-            print("═" * 70)
-
-            try:
-                process_existing_paired_input(
-                    input_id,
-                    args.lang,
-                    args.max_duration,
-                    enable_gl_extra_asr=not args.skip_gl_extra_asr,
-                )
-            except Exception as e:
-                print(f"❌ Failed: {input_id} → {e}")
-                print("⚠️  Skipping...\n")
-
-    # -------------------------------
-    # FULL BATCH MODE
-    # -------------------------------
+        pipeline.run_batch(input_ids=input_ids)
+        print(f"\nPipeline finished. Final JSON files are in {ROVER_DIR}")
     else:
-        input_ids = find_valid_input_ids()
-
-        for i, input_id in enumerate(input_ids, 1):
-            print("\n" + "═" * 70)
-            print(f"[{i}/{len(input_ids)}] Processing {input_id}")
-            print("═" * 70)
-
-            try:
-                process_existing_paired_input(
-                    input_id,
-                    args.lang,
-                    args.max_duration,
-                    enable_gl_extra_asr=not args.skip_gl_extra_asr,
-                )
-            except Exception as e:
-                print(f"❌ Failed: {input_id} → {e}")
-                print("⚠️  Skipping...\n")
-
-    print("\n✅ Pipeline finished – find JSON in",
-          ROOT / "inputs" / "wordlevel_alignment")
+        pipeline.run_batch()
+        print(f"\nPipeline finished. Final JSON files are in {ROVER_DIR}")
 
 
 if __name__ == "__main__":

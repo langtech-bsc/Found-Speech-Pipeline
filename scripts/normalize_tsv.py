@@ -4,74 +4,38 @@ normalize_tsv.py
 ================
 Normalize text in a TSV file.
 
-CLI wrapper for fsp.core.text functions.
+CLI wrapper for fsp.pipeline.Pipeline.normalize_tsv.
 """
 
-import csv
-import os
+from __future__ import annotations
+
+import argparse
 import sys
+from pathlib import Path
 
-import pandas as pd
-from loguru import logger
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
-from clean_and_split import split_text, remove_chars
-from clean_and_expand import clean_text
+from fsp.pipeline import Pipeline
 
 
-def _usage() -> str:
-    return f"Usage: python3 {os.path.basename(__file__)} <input_tsv> <lang:ca|es|eu|gl> [mark]"
-
-def main():
-    # Expect 2 or 3 args after the script name
-    if not (3 <= len(sys.argv) <= 4):
-        raise ValueError(f"Invalid arguments. {_usage()}")
-    input_file = sys.argv[1]
-    lang = sys.argv[2]
-    mark = sys.argv[3] if len(sys.argv) == 4 else ""
-
-    if lang not in ("ca", "es", "eu", "gl"):
-        raise ValueError(f"lang must be 'ca', 'es', 'eu', or 'gl'. {_usage()}")
-    if not os.path.isfile(input_file):
-        raise FileNotFoundError(f"input file '{input_file}' not found")
-
-    # Load TSV (no header)
-    df = pd.read_csv(input_file, sep="\t", header=None, names=["wav_path", "text"], dtype=str)
-
-    def normalize_row(t, lang, mark):
-        # Pre-process text to standardize end of sentences
-        t = t.replace("\n", ".").replace(" - ", ".").replace(" · ", ".").replace("|", ".")
-        # First use V1's sentence splitting which carefully handles abbreviation dots
-        split_str = split_text(remove_chars(t, False, lang), False, mark)
-        # Then apply V2's clean_text to each segment
-        if not split_str:
-            return ""
-        if not mark:
-            return clean_text(split_str.strip(), lang, False, False)
-        return mark.join([clean_text(s.strip(), lang, False, False) for s in split_str.split(mark) if s.strip()])
-
-    # Normalize text column
-    df["normalized_text"] = df["text"].apply(lambda t: normalize_row(t, lang, mark))
-    suffix = "norm_mark"
-
-    # Build output filename in normalized/ directory
-    input_path = os.path.abspath(input_file)
-    filename = os.path.basename(input_path)
-    base, ext = os.path.splitext(filename)
-
-    out_dir = os.path.join("inputs/normalized", base)
-    os.makedirs(out_dir, exist_ok=True)
-
-    out_name = os.path.join(out_dir, f"{base}_{suffix}{ext}")
-
-    # Write wav_path + original text + normalized_text
-    df[["wav_path", "text", "normalized_text"]].to_csv(
-        out_name, sep="\t", index=False, header=False, quoting=csv.QUOTE_ALL
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        "Normalize TSV text",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    logger.info("Normalized TSV written to: {}", out_name)
+    parser.add_argument("input_tsv", type=Path)
+    parser.add_argument("lang", choices=("ca", "es", "eu", "gl"))
+    parser.add_argument("mark", nargs="?", default="")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    pipeline = Pipeline(lang=args.lang)
+    pipeline.normalize_tsv(args.input_tsv, args.lang, args.mark)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except (ValueError, FileNotFoundError) as e:
-        raise Exception(e)
+    main()

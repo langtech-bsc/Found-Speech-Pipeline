@@ -11,22 +11,44 @@ if TYPE_CHECKING:
 
 
 def choose_language(
-    text: str, lid: "fasttext.FastText._FastText", conf_delta: float = 0.2
+    text: str,
+    lid: "fasttext.FastText._FastText",
+    conf_delta: float = 0.2,
+    pri_lang: str | None = None,
 ) -> Tuple[str, float]:
     """
-    FastText-based language choice tuned for ca/es.
+    FastText-based language choice tuned for ca/es/eu/gl.
 
     Args:
         text: Input text to classify
         lid: FastText language identification model
-        conf_delta: Confidence delta threshold for ca/es disambiguation
+        conf_delta: Confidence delta threshold for close language pairs
+        pri_lang: Expected pipeline language, used as a tie-breaker
 
     Returns:
         Tuple of (language_code, confidence_score)
     """
-    labels, confs = lid.predict(text, k=2)
-    l1, c1 = labels[0].replace("__label__", ""), float(confs[0])
-    l2, c2 = labels[1].replace("__label__", ""), float(confs[1])
+    supported = {"ca", "es", "eu", "gl"}
+    labels, confs = lid.predict(text, k=3)
+    langs = [label.replace("__label__", "") for label in labels]
+    confs = [float(conf) for conf in confs]
+
+    l1, c1 = langs[0], confs[0]
+    l2, c2 = langs[1], confs[1]
+
+    if pri_lang in supported and l1 not in supported and c1 < 0.5 and pri_lang in langs:
+        idx = langs.index(pri_lang)
+        return pri_lang, confs[idx]
+
+    if l1 == "eu":
+        return "eu", c1
+    if l1 == "es" and l2 == "eu" and (c1 - c2) < conf_delta:
+        return "eu", c2
+
+    if l1 == "gl":
+        return "gl", c1
+    if l1 == "pt" and l2 == "gl" and (c1 - c2) < conf_delta:
+        return "gl", c2
 
     if l1 == "ca":
         return "ca", c1

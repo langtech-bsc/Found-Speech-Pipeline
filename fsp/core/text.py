@@ -157,6 +157,44 @@ def clean_text(input_text: str, lang: str, punctuation: bool, capitalisation: bo
             physics_and_maths,
             roman_nums,
         )
+    elif lang == "eu":
+        from scripts.norm_eu import normalize_eu
+
+        if "|" in input_text:
+            input_text = "|".join(normalize_eu(chunk) for chunk in input_text.split("|"))
+        else:
+            input_text = normalize_eu(input_text)
+        accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -|"
+        if punctuation:
+            accepted_chars += ',()¡¿"«»' "'';.?!:…"
+        if capitalisation:
+            clean_result = "".join(
+                char if char.lower() in accepted_chars else " " for char in input_text
+            )
+        else:
+            clean_result = "".join(
+                char.lower() if char.lower() in accepted_chars else " " for char in input_text
+            )
+        return re.sub(r"\s+", " ", clean_result).strip()
+    elif lang == "gl":
+        from scripts.norm_gl import normalize_gl
+
+        if "|" in input_text:
+            input_text = "|".join(normalize_gl(chunk) for chunk in input_text.split("|"))
+        else:
+            input_text = normalize_gl(input_text)
+        accepted_chars = string.ascii_lowercase + "àèìòùáéíóúäëïöüñçâêîôûæãẽĩõũ'· -|"
+        if punctuation:
+            accepted_chars += ',()¡¿"«»' "'';.?!:…"
+        if capitalisation:
+            clean_result = "".join(
+                char if char.lower() in accepted_chars else " " for char in input_text
+            )
+        else:
+            clean_result = "".join(
+                char.lower() if char.lower() in accepted_chars else " " for char in input_text
+            )
+        return re.sub(r"\s+", " ", clean_result).strip()
     else:
         raise ValueError(f"Language not supported: {lang}")
 

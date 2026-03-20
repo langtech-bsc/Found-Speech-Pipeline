@@ -104,11 +104,11 @@ def clean_text(input_text, lang, punctuation, capitalisation):
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
     if lang == "ca":
-        from scripts.norm_dicts_ca import ordinals, currency, phisics_and_maths, greek_letters, letters
+        from scripts.norm_dicts_ca import ordinals, currency, physics_and_maths, greek_letters, letters
         from scripts.norm_dicts_ca import abr_dict, roman_nums, acronyms_dict, dots_and_commas
         from scripts.norm_dicts_ca import onset, coda
     elif lang == "es":
-        from scripts.norm_dicts_es import ordinals, currency, phisics_and_maths, greek_letters, letters
+        from scripts.norm_dicts_es import ordinals, currency, physics_and_maths, greek_letters, letters
         from scripts.norm_dicts_es import abr_dict, roman_nums, acronyms_dict, dots_and_commas
 
         from scripts.norm_dicts_es import onset, coda
@@ -146,7 +146,7 @@ def clean_text(input_text, lang, punctuation, capitalisation):
     else:
         raise ValueError(f"Language '{lang}' is not supported by clean_text. Supported: ca, es, eu, gl")
 
-    special_chars = greek_letters | phisics_and_maths | currency # only one char
+    special_chars = greek_letters | physics_and_maths | currency # only one char
     abreviations = abr_dict | acronyms_dict | ordinals # more than one char
         
     if any(i in special_chars.keys() for i in str(input_text)):    

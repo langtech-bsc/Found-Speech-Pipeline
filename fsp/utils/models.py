@@ -17,8 +17,20 @@ from fsp.utils.paths import (
     LID_MODEL_PATH_ENV_VAR,
     NEMO_MODEL_DIR_ENV_VAR,
     ModelPaths,
+    resolve_model_reference,
     resolve_model_paths,
 )
+
+
+def _find_nemo_file(path: str | Path) -> Path | None:
+    candidate = Path(path)
+    if candidate.is_file() and candidate.suffix == ".nemo":
+        return candidate
+    if candidate.is_dir():
+        nemo_files = sorted(candidate.glob("*.nemo"))
+        if nemo_files:
+            return nemo_files[0]
+    return None
 
 
 def configure_model_environment(
@@ -84,7 +96,19 @@ def load_model(
     if kind == "rnnt":
         from nemo.collections.asr.models.rnnt_bpe_models import EncDecRNNTBPEModel
 
-        return EncDecRNNTBPEModel.from_pretrained(repo, map_location=device).to(device).eval()
+        resolved_repo = resolve_model_reference(repo, kind, nemo_model_dir=nemo_model_dir, hf_model_dir=hf_model_dir)
+        nemo_file = _find_nemo_file(resolved_repo)
+        if nemo_file:
+            return EncDecRNNTBPEModel.restore_from(str(nemo_file), map_location=device).to(device).eval()
+        return EncDecRNNTBPEModel.from_pretrained(str(resolved_repo), map_location=device).to(device).eval()
+    if kind == "ctc":
+        import nemo.collections.asr as nemo_asr
+
+        resolved_repo = resolve_model_reference(repo, kind, nemo_model_dir=nemo_model_dir, hf_model_dir=hf_model_dir)
+        nemo_file = _find_nemo_file(resolved_repo)
+        if nemo_file:
+            return nemo_asr.models.EncDecCTCModelBPE.restore_from(str(nemo_file), map_location=device).to(device).eval()
+        return nemo_asr.models.EncDecCTCModelBPE.from_pretrained(str(resolved_repo), map_location=device).to(device).eval()
     if kind == "multi":
         from nemo.collections.asr.models.aed_multitask_models import EncDecMultiTaskModel
 

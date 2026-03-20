@@ -31,8 +31,8 @@ class Segmenter:
         audio_file: str,
         out_path: str,
         lg_model: "fasttext.FastText._FastText",
-        ca_model: Any,
-        es_model: Any,
+        ca_model: Any = None,
+        es_model: Any = None,
     ):
         """
         Initialize the Segmenter.
@@ -93,24 +93,27 @@ class Segmenter:
                 continue
 
             lang_label = self._identify_language(normalized_text)
-            if lang_label == "__label__ca":
-                model = self.ca_model or self.es_model
-                pred_text = self._asr(model, wav_path)
-                language = "ca"
-            else:
-                model = self.es_model or self.ca_model
-                pred_text = self._asr(model, wav_path)
-                language = "es"
-
             result = {
                 "segment_path": wav_path,
                 "start": start,
                 "end": end,
-                "language": language,
                 "normalized_text": normalized_text,
-                "pred_text": pred_text,
-                "cer_score": cer(normalized_text, pred_text),
             }
+
+            if self.ca_model is not None or self.es_model is not None:
+                if lang_label == "__label__ca":
+                    model = self.ca_model or self.es_model
+                    language = "ca"
+                else:
+                    model = self.es_model or self.ca_model
+                    language = "es"
+
+                if model is not None:
+                    pred_text = self._asr(model, wav_path)
+                    result["language"] = language
+                    result["pred_text"] = pred_text
+                    result["cer_score"] = cer(normalized_text, pred_text)
+
             results.append(result)
 
         return results

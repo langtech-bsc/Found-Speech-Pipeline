@@ -24,6 +24,13 @@ class ModelPaths:
     hf_model_dir: Path
 
 
+def _first_existing_path(candidates: list[Path]) -> Path | None:
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def resolve_model_dir(model_dir: str | Path | None = None) -> Path:
     """
     Resolve the legacy shared model root directory.
@@ -49,8 +56,9 @@ def resolve_lid_model_path(lid_model_path: str | Path | None = None) -> Path:
     Resolution order:
     1. Explicit function argument
     2. LID_MODEL_PATH environment variable
-    3. Legacy MODEL_DIR / "lid.176.bin"
-    4. Repository default
+    3. Legacy MODEL_DIR / "fasttext" / "lid.176.bin"
+    4. Legacy MODEL_DIR / "lid.176.bin"
+    5. Repository default
     """
     if lid_model_path is not None:
         return Path(lid_model_path).expanduser()
@@ -58,7 +66,12 @@ def resolve_lid_model_path(lid_model_path: str | Path | None = None) -> Path:
     if env_path := os.getenv(LID_MODEL_PATH_ENV_VAR):
         return Path(env_path).expanduser()
 
-    return resolve_model_dir() / "lid.176.bin"
+    model_dir = resolve_model_dir()
+    candidates = [
+        model_dir / "fasttext" / "lid.176.bin",
+        model_dir / "lid.176.bin",
+    ]
+    return _first_existing_path(candidates) or candidates[0]
 
 
 def resolve_nemo_model_dir(nemo_model_dir: str | Path | None = None) -> Path:
@@ -69,7 +82,8 @@ def resolve_nemo_model_dir(nemo_model_dir: str | Path | None = None) -> Path:
     1. Explicit function argument
     2. NEMO_MODEL_DIR environment variable
     3. Legacy MODEL_DIR / "nemo"
-    4. Repository default
+    4. Legacy MODEL_DIR itself when it already contains NeMo checkpoints
+    5. Repository default
     """
     if nemo_model_dir is not None:
         return Path(nemo_model_dir).expanduser()
@@ -77,7 +91,12 @@ def resolve_nemo_model_dir(nemo_model_dir: str | Path | None = None) -> Path:
     if env_path := os.getenv(NEMO_MODEL_DIR_ENV_VAR):
         return Path(env_path).expanduser()
 
-    return resolve_model_dir() / "nemo"
+    model_dir = resolve_model_dir()
+    candidates = [
+        model_dir / "nemo",
+        model_dir,
+    ]
+    return _first_existing_path(candidates) or candidates[0]
 
 
 def resolve_hf_model_dir(hf_model_dir: str | Path | None = None) -> Path:
@@ -88,7 +107,8 @@ def resolve_hf_model_dir(hf_model_dir: str | Path | None = None) -> Path:
     1. Explicit function argument
     2. HF_MODEL_DIR environment variable
     3. Legacy MODEL_DIR / "huggingface"
-    4. Repository default
+    4. Legacy MODEL_DIR itself when it already contains HF model directories
+    5. Repository default
     """
     if hf_model_dir is not None:
         return Path(hf_model_dir).expanduser()
@@ -96,7 +116,49 @@ def resolve_hf_model_dir(hf_model_dir: str | Path | None = None) -> Path:
     if env_path := os.getenv(HF_MODEL_DIR_ENV_VAR):
         return Path(env_path).expanduser()
 
-    return resolve_model_dir() / "huggingface"
+    model_dir = resolve_model_dir()
+    candidates = [
+        model_dir / "huggingface",
+        model_dir,
+    ]
+    return _first_existing_path(candidates) or candidates[0]
+
+
+def resolve_model_reference(
+    repo: str | Path,
+    kind: str,
+    nemo_model_dir: str | Path | None = None,
+    hf_model_dir: str | Path | None = None,
+) -> Path:
+    """
+    Resolve a model reference to a local path when possible.
+
+    The reference may already be an absolute/local path, or a short model name
+    that should be looked up under the configured NeMo or HF roots.
+    """
+    candidate = Path(repo).expanduser()
+    if candidate.exists():
+        return candidate
+
+    direct_name = candidate.name
+    nemo_root = resolve_nemo_model_dir(nemo_model_dir)
+    hf_root = resolve_hf_model_dir(hf_model_dir)
+    search_roots = [hf_root, nemo_root]
+    if kind in {"rnnt", "ctc"}:
+        search_roots = [nemo_root, hf_root]
+
+    for root in search_roots:
+        options = [
+            root / candidate,
+            root / direct_name,
+            (root / candidate).with_suffix(".nemo"),
+            (root / direct_name).with_suffix(".nemo"),
+        ]
+        resolved = _first_existing_path(options)
+        if resolved is not None:
+            return resolved
+
+    return candidate
 
 
 def resolve_model_paths(
@@ -148,6 +210,7 @@ __all__ = [
     "resolve_nemo_model_dir",
     "resolve_hf_model_dir",
     "resolve_model_paths",
+    "resolve_model_reference",
     "SCRIPTS_DIR",
     "STEPS_DIR",
     "INGESTION_DIR",

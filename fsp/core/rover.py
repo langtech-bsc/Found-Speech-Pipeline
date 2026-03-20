@@ -132,7 +132,9 @@ def wer(ref: str, hyp: str) -> float:
     Returns:
         WER score
     """
-    return edist(" ".join(ref.split()), " ".join(hyp.split())) / max(len(ref.split()), 1)
+    ref_tokens = ref.split()
+    hyp_tokens = hyp.split()
+    return edist(ref_tokens, hyp_tokens) / max(len(ref_tokens), 1)
 
 
 class RoverConfig:
@@ -188,22 +190,33 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
         logger.warning(f"[{path.name}] No segments found (filtered out?). Skipping.")
         return 0.0, 0.0, 0
 
-    any_seg = flat_results[0]
-    norm_fields = config.fields or sorted(collect_norm_fields(any_seg))
-    logger.info(f"[{path.name}] Merging over {norm_fields}")
-
     rows: List[Dict] = []
     tot_chars = err_ro_c = err_ro_w = 0.0
     err_baseline: Dict[str, float] = defaultdict(float)
     keep_langs = set(config.langs)
+    seen_norm_fields: set[str] = set()
+    logged_fields_by_lang: Dict[str, Tuple[str, ...]] = {}
 
     for block in data.values():
         for seg in block["results"]:
             if seg.get("language") not in keep_langs:
                 continue
 
+            norm_fields = config.fields or sorted(collect_norm_fields(seg))
+            if not norm_fields:
+                logger.warning(
+                    f"[{path.name}] Segment {seg.get('segment_path', '<unknown>')} has no norm_text_* fields; skipping."
+                )
+                continue
+
+            seg_lang = str(seg.get("language", ""))
+            if seg_lang not in logged_fields_by_lang:
+                logged_fields_by_lang[seg_lang] = tuple(norm_fields)
+                logger.info(f"[{path.name}] Merging {seg_lang} over {norm_fields}")
+
             ref = seg["normalized_text"]
             hyps_raw = [seg[f] for f in norm_fields]
+            seen_norm_fields.update(norm_fields)
 
             ref_norm = normalise(ref) if config.norm else ref
             hyps = [clean_pred(h) for h in hyps_raw]
@@ -240,11 +253,12 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
     if config.csv and pd and rows:
         pd.DataFrame(rows).to_csv(out_json.with_suffix(".csv"), index=False)
 
-    if config.plot and plt and tot_chars:
-        bars = [err_baseline[f] / tot_chars for f in norm_fields] + [err_ro_c / tot_chars]
+    plot_fields = sorted(seen_norm_fields)
+    if config.plot and plt and tot_chars and plot_fields:
+        bars = [err_baseline[f] / tot_chars for f in plot_fields] + [err_ro_c / tot_chars]
         plt.figure(figsize=(max(6, 1.2 * len(bars)), 4))
         plt.bar(range(len(bars)), bars)
-        clean = [re.sub(r"^norm_text_", "", f) for f in norm_fields] + ["ROVER"]
+        clean = [re.sub(r"^norm_text_", "", f) for f in plot_fields] + ["ROVER"]
         plt.xticks(range(len(bars)), clean, rotation=45, ha="right")
         plt.ylabel("Corpus CER")
         plt.title(f"{path.name}  ({','.join(sorted(keep_langs))})")

@@ -21,7 +21,14 @@ from loguru import logger
 from fsp.core.text import clean_text
 from fsp.utils.language import choose_language
 from fsp.utils.models import configure_model_environment, load_model, unload_model
-from fsp.utils.paths import ALIGN_DIR, MANIFEST_DIR, NORM_DIR, OUTPUT_SEGMENT_DIR, ROOT
+from fsp.utils.paths import (
+    ALIGN_DIR,
+    MANIFEST_DIR,
+    NORM_DIR,
+    OUTPUT_SEGMENT_DIR,
+    ROOT,
+    resolve_model_reference,
+)
 
 if TYPE_CHECKING:
     import fasttext
@@ -44,11 +51,30 @@ MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
         ("stt_es_conformer_transducer_large", "rnnt", "nvidia/stt_es_conformer_transducer_large"),
         ("whisper_large_v3", "pipe", "openai/whisper-large-v3"),
     ),
+    "eu": (
+        ("stt_eu_conformer_transducer_large", "rnnt", "stt_eu_conformer_transducer_large"),
+        ("stt_eu_conformer_ctc_large", "ctc", "stt_eu_conformer_ctc_large"),
+        ("whisper_tiny_eu", "pipe", "whisper-tiny-eu"),
+        ("whisper_small_eu", "pipe", "whisper-small-eu"),
+        ("whisper_base_eu", "pipe", "whisper-base-eu"),
+        ("whisper_medium_eu", "pipe", "whisper-medium-eu"),
+        ("whisper_large_eu", "pipe", "whisper-large-eu"),
+        ("whisper_large_v2_eu", "pipe", "whisper-large-v2-eu"),
+        ("whisper_large_v3_eu", "pipe", "whisper-large-v3-eu"),
+        ("whisper_large_v3_fallback", "pipe", "whisper-large-v3"),
+    ),
+    "gl": (
+        ("stt_gl_conformer_ctc_large", "ctc", "stt_gl_conformer_ctc_large"),
+        ("whisper_large_v3_gl", "pipe", "whisper-large-v3-gl"),
+        ("whisper_large_v3_fallback", "pipe", "whisper-large-v3"),
+    ),
 }
 
 CTC_MODELS = {
     "ca": "stt_ca_conformer_ctc_large",
     "es": "stt_es_conformer_ctc_large",
+    "eu": "stt_eu_conformer_ctc_large",
+    "gl": "stt_gl_conformer_ctc_large",
 }
 
 LEGACY_KEYS = {"pred_text", "cer_score"}
@@ -72,7 +98,18 @@ def _clean_singleton_json_array(txt: str) -> str:
     return s[2:-2].strip()
 
 
-def transcribe(model: Any, kind: str, audio: str) -> str:
+def _find_nemo_file(path: str | Path) -> Path | None:
+    candidate = Path(path)
+    if candidate.is_file() and candidate.suffix == ".nemo":
+        return candidate
+    if candidate.is_dir():
+        nemo_files = sorted(candidate.glob("*.nemo"))
+        if nemo_files:
+            return nemo_files[0]
+    return None
+
+
+def transcribe(model: Any, kind: str, audio: str, lang: str = "ca") -> str:
     """
     Run model on audio and normalize the string it returns.
 
@@ -85,14 +122,14 @@ def transcribe(model: Any, kind: str, audio: str) -> str:
         Transcribed text
     """
     if kind == "pipe":
-        out = model(audio)
+        out = model(audio, generate_kwargs={"task": "transcribe", "language": lang})
         if isinstance(out, dict):
             txt = out.get("text", "")
         elif isinstance(out, list) and out and isinstance(out[0], dict):
             txt = " ".join(d.get("text", "") for d in out)
         else:
             txt = str(out)
-    else:  # rnnt / multi
+    else:  # rnnt / multi / ctc
         out = model.transcribe([audio], batch_size=1)[0]
         txt = out if isinstance(out, str) else getattr(out, "text", str(out))
 
@@ -110,7 +147,11 @@ def hhmmss_to_sec(t: str | int | float) -> float:
         return float(t)
 
 
-def build_manifest(meta_path: Path, lid_model: "fasttext.FastText._FastText") -> Path:
+def build_manifest(
+    meta_path: Path,
+    lid_model: "fasttext.FastText._FastText",
+    pri_lang: str | None = None,
+) -> Path:
     """
     Build a NeMo manifest from metadata.
 
@@ -150,8 +191,16 @@ def build_manifest(meta_path: Path, lid_model: "fasttext.FastText._FastText") ->
         if not src_org.strip():
             continue
 
-        lang, conf = choose_language(src_norm, lid_model)
-        cleaned_normalized = clean_text(src_norm, lang, False, False)
+        lang, conf = choose_language(src_norm, lid_model, pri_lang=pri_lang)
+        if "|" in src_norm:
+            cleaned_chunks = [
+                clean_text(chunk.strip(), lang, False, False)
+                for chunk in src_norm.split("|")
+                if chunk.strip()
+            ]
+            cleaned_normalized = "|".join(cleaned_chunks)
+        else:
+            cleaned_normalized = clean_text(src_norm, lang, False, False)
 
         entries.append(
             {
@@ -176,8 +225,7 @@ def build_manifest(meta_path: Path, lid_model: "fasttext.FastText._FastText") ->
 def run_forced_alignment(
     manifest_fp: Path,
     input_id: str,
-    model_name: str,
-    local_nemo_path: Path | None = None,
+    aligner_model_arg: str,
 ) -> Path:
     """
     Run NeMo forced aligner.
@@ -185,19 +233,13 @@ def run_forced_alignment(
     Args:
         manifest_fp: Path to manifest file
         input_id: Input identifier
-        model_name: Name of the NeMo model
-        local_nemo_path: Path to local .nemo file (optional)
+        aligner_model_arg: Hydra model argument for the NeMo aligner
 
     Returns:
         Path to alignment output directory
     """
     input_align_dir = ALIGN_DIR / input_id
     input_align_dir.mkdir(parents=True, exist_ok=True)
-
-    if local_nemo_path and local_nemo_path.is_file():
-        aligner_model_arg = f"model_path={local_nemo_path}"
-    else:
-        aligner_model_arg = f"pretrained_name={model_name}"
 
     subprocess.run(
         [
@@ -232,7 +274,7 @@ def generate_final_data(
 
     Args:
         input_id: Input identifier
-        lang: Primary language ('ca' or 'es')
+        lang: Primary language ('ca', 'es', 'eu', or 'gl')
         output_name: Custom output JSON name
         device: Device for ASR ('auto', 'cuda', 'cpu')
         lid_model_path: Path to the FastText language-ID model file
@@ -260,15 +302,27 @@ def generate_final_data(
         raise FileNotFoundError(f"language-ID model not found: {model_paths.lid_model_path}")
     lid_model = fasttext.load_model(str(model_paths.lid_model_path))
 
-    # Load CTC model
+    # Load the primary CTC model used by forced alignment.
     primary_model_name = CTC_MODELS[lang]
-    local_nemo = model_paths.nemo_model_dir / f"{primary_model_name}.nemo"
+    primary_model_ref = resolve_model_reference(
+        primary_model_name,
+        "ctc",
+        nemo_model_dir=model_paths.nemo_model_dir,
+        hf_model_dir=model_paths.hf_model_dir,
+    )
+    local_nemo = _find_nemo_file(primary_model_ref)
 
-    if local_nemo.is_file():
+    if local_nemo is not None:
         logger.info(f"Loading local NeMo model: {local_nemo}")
         primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
+        aligner_model_arg = f"model_path={local_nemo}"
+    elif primary_model_ref.is_dir():
+        logger.info(f"Loading NeMo model from directory: {primary_model_ref}")
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(primary_model_ref))
+        aligner_model_arg = f"pretrained_name={primary_model_ref.name}"
     else:
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(primary_model_name)
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(str(primary_model_ref))
+        aligner_model_arg = f"pretrained_name={primary_model_ref.name}"
 
     ca_asr = primary_asr if lang == "ca" else None
     es_asr = primary_asr if lang == "es" else None
@@ -290,14 +344,14 @@ def generate_final_data(
         raise FileNotFoundError(f"metadata not found: {meta_path}")
 
     # 1. Forced alignment
-    manifest_fp = build_manifest(meta_path, lid_model)
-    input_align_dir = run_forced_alignment(manifest_fp, input_id, primary_model_name, local_nemo)
+    manifest_fp = build_manifest(meta_path, lid_model, pri_lang=lang)
+    input_align_dir = run_forced_alignment(manifest_fp, input_id, aligner_model_arg)
 
     # 2. Segment & language-tag
     out_seg_dir = OUTPUT_SEGMENT_DIR / input_id
     out_seg_dir.mkdir(parents=True, exist_ok=True)
 
-    buckets: Dict[str, List[Dict[str, Any]]] = {"ca": [], "es": []}
+    buckets: Dict[str, List[Dict[str, Any]]] = {"ca": [], "es": [], "eu": [], "gl": []}
     combined: Dict[str, Any] = {}
 
     ctm_dir = input_align_dir / "ctm" / "segments"
@@ -309,21 +363,29 @@ def generate_final_data(
 
         seg = Segmenter(str(ctm_file), str(wav_src), str(out_seg_dir), lid_model, ca_asr, es_asr)
         results = seg.segment_audio()
+        kept_results: List[Dict[str, Any]] = []
 
         for r in results:
             for k in LEGACY_KEYS:
                 r.pop(k, None)
 
-            detected_lang, conf = choose_language(r["normalized_text"], lid_model)
-            if detected_lang not in ("ca", "es"):
+            detected_lang, conf = choose_language(r["normalized_text"], lid_model, pri_lang=lang)
+            if detected_lang not in ("ca", "es", "eu", "gl"):
                 continue
             r["language"] = detected_lang
             r["language_confidence"] = round(conf, 2)
+            if detected_lang in ("ca", "es") and "pred_text" in r:
+                r["pred_text_segmenter"] = r.pop("pred_text")
+                r.pop("cer_score", None)
+            else:
+                r.pop("pred_text", None)
+                r.pop("cer_score", None)
             buckets[detected_lang].append(r)
+            kept_results.append(r)
 
         combined[block_id] = {
             "input_id": input_id,
-            "results": results,
+            "results": kept_results,
         }
 
     # 3. ASR per-language, one model at a time
@@ -334,10 +396,16 @@ def generate_final_data(
         for name, kind, repo in MODELS_BY_LANG[seg_lang]:
             model = None
             try:
-                logging.info("loading %s", repo)
+                resolved_repo = resolve_model_reference(
+                    repo,
+                    kind,
+                    nemo_model_dir=model_paths.nemo_model_dir,
+                    hf_model_dir=model_paths.hf_model_dir,
+                )
+                logging.info("loading %s", resolved_repo)
                 model = load_model(
                     kind,
-                    repo,
+                    str(resolved_repo),
                     resolved_device,
                     nemo_model_dir=model_paths.nemo_model_dir,
                     hf_model_dir=model_paths.hf_model_dir,
@@ -346,14 +414,20 @@ def generate_final_data(
                 for r in segs:
                     key = f"pred_text_{name}"
                     norm_key = f"norm_text_{name}"
-                    transcription = ""
-                    if r.get(key):
+                    transcription = r.get(key, "") or ""
+                    if transcription:
+                        if norm_key not in r:
+                            try:
+                                r[norm_key] = clean_text(transcription, seg_lang, False, False)
+                            except Exception as err:
+                                logging.warning("[norm_script:] %s on %s: %s", repo, r["segment_path"], err)
+                                r[norm_key] = ""
                         continue
                     try:
-                        transcription = transcribe(model, kind, r["segment_path"])
+                        transcription = transcribe(model, kind, r["segment_path"], lang=seg_lang)
                         r[key] = transcription
                     except Exception as err:
-                        logging.warning("%s on %s: %s", repo, r["segment_path"], err)
+                        logging.warning("%s on %s: %s", resolved_repo, r["segment_path"], err)
                         r[key] = ""
                     try:
                         r[norm_key] = clean_text(transcription, seg_lang, False, False)
