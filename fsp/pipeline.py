@@ -59,7 +59,7 @@ class Pipeline:
         self.nemo_model_dir = resolve_nemo_model_dir(nemo_model_dir)
         self.hf_model_dir = resolve_hf_model_dir(hf_model_dir)
 
-    def normalize_tsv(self, input_tsv: Path, lang: str, mark: str = ". ") -> Path:
+    def normalize_tsv(self, input_tsv: Path, lang: str, mark: str = "|") -> Path:
         """
         Normalize a TSV file (Step 1).
 

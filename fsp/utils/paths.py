@@ -10,7 +10,9 @@ from pathlib import Path
 
 # Project root (parent of fsp/ directory)
 ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_MODELS_ROOT = ROOT / "utils" / "models"
 
+MODELS_ROOT_ENV_VAR = "MODELS_ROOT"
 MODEL_DIR_ENV_VAR = "MODEL_DIR"
 LID_MODEL_PATH_ENV_VAR = "LID_MODEL_PATH"
 NEMO_MODEL_DIR_ENV_VAR = "NEMO_MODEL_DIR"
@@ -26,18 +28,13 @@ class ModelPaths:
 
 def resolve_model_dir(model_dir: str | Path | None = None) -> Path:
     """
-    Resolve the legacy shared model root directory.
-
-    Resolution order:
-    1. Explicit function argument
-    2. MODEL_DIR environment variable
-    3. Repository default: ROOT / "utils" / "models"
+    Resolve the shared ASR model root directory.
     """
     if model_dir is None:
-        model_dir = os.getenv(MODEL_DIR_ENV_VAR)
+        model_dir = os.getenv(MODELS_ROOT_ENV_VAR) or os.getenv(MODEL_DIR_ENV_VAR)
 
     if model_dir is None:
-        return ROOT / "utils" / "models"
+        return DEFAULT_MODELS_ROOT
 
     return Path(model_dir).expanduser()
 
@@ -45,12 +42,6 @@ def resolve_model_dir(model_dir: str | Path | None = None) -> Path:
 def resolve_lid_model_path(lid_model_path: str | Path | None = None) -> Path:
     """
     Resolve the FastText language-ID model file path.
-
-    Resolution order:
-    1. Explicit function argument
-    2. LID_MODEL_PATH environment variable
-    3. Legacy MODEL_DIR / "lid.176.bin"
-    4. Repository default
     """
     if lid_model_path is not None:
         return Path(lid_model_path).expanduser()
@@ -58,18 +49,12 @@ def resolve_lid_model_path(lid_model_path: str | Path | None = None) -> Path:
     if env_path := os.getenv(LID_MODEL_PATH_ENV_VAR):
         return Path(env_path).expanduser()
 
-    return resolve_model_dir() / "lid.176.bin"
+    return resolve_model_dir() / "fasttext" / "lid.176.bin"
 
 
 def resolve_nemo_model_dir(nemo_model_dir: str | Path | None = None) -> Path:
     """
-    Resolve the directory containing local NeMo checkpoints.
-
-    Resolution order:
-    1. Explicit function argument
-    2. NEMO_MODEL_DIR environment variable
-    3. Legacy MODEL_DIR / "nemo"
-    4. Repository default
+    Resolve the directory containing local NeMo model folders.
     """
     if nemo_model_dir is not None:
         return Path(nemo_model_dir).expanduser()
@@ -77,18 +62,12 @@ def resolve_nemo_model_dir(nemo_model_dir: str | Path | None = None) -> Path:
     if env_path := os.getenv(NEMO_MODEL_DIR_ENV_VAR):
         return Path(env_path).expanduser()
 
-    return resolve_model_dir() / "nemo"
+    return resolve_model_dir()
 
 
 def resolve_hf_model_dir(hf_model_dir: str | Path | None = None) -> Path:
     """
-    Resolve the directory containing the HuggingFace model cache root.
-
-    Resolution order:
-    1. Explicit function argument
-    2. HF_MODEL_DIR environment variable
-    3. Legacy MODEL_DIR / "huggingface"
-    4. Repository default
+    Resolve the directory containing local HuggingFace model folders.
     """
     if hf_model_dir is not None:
         return Path(hf_model_dir).expanduser()
@@ -96,7 +75,7 @@ def resolve_hf_model_dir(hf_model_dir: str | Path | None = None) -> Path:
     if env_path := os.getenv(HF_MODEL_DIR_ENV_VAR):
         return Path(env_path).expanduser()
 
-    return resolve_model_dir() / "huggingface"
+    return resolve_model_dir()
 
 
 def resolve_model_paths(
@@ -135,6 +114,8 @@ FFMPEG_CMD = "ffmpeg"
 __all__ = [
     "ModelPaths",
     "ROOT",
+    "DEFAULT_MODELS_ROOT",
+    "MODELS_ROOT_ENV_VAR",
     "MODEL_DIR_ENV_VAR",
     "LID_MODEL_PATH_ENV_VAR",
     "NEMO_MODEL_DIR_ENV_VAR",

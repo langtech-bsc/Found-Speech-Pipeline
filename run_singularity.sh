@@ -17,11 +17,11 @@
 #   ${NEMO_MODEL_DIR:-utils/models/nemo} -> /app/utils/models/nemo
 #   ${HF_MODEL_DIR:-utils/models/huggingface} -> /app/utils/models/huggingface
 # ===========================================================================
-
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SIF="${SCRIPT_DIR}/fsp-pipeline.sif"
+DEFAULT_MODELS_ROOT="/gpfs/projects/bsc88/speech/ASR/models"
 
 # Detect Singularity or Apptainer
 if command -v apptainer &>/dev/null; then
@@ -40,39 +40,32 @@ if [[ ! -f "${SIF}" ]]; then
     exit 1
 fi
 
-LID_MODEL_PATH_HOST="${LID_MODEL_PATH:-${SCRIPT_DIR}/utils/models/lid.176.bin}"
-NEMO_MODEL_DIR_HOST="${NEMO_MODEL_DIR:-${SCRIPT_DIR}/utils/models/nemo}"
-HF_MODEL_DIR_HOST="${HF_MODEL_DIR:-${SCRIPT_DIR}/utils/models/huggingface}"
+INGESTION_DIR="${FSP_INGESTION_DIR:-${SCRIPT_DIR}/ingestion}"
+INPUTS_DIR="${FSP_INPUTS_DIR:-${SCRIPT_DIR}/inputs}"
+MERGED_DIR="${FSP_MERGED_DIR:-${SCRIPT_DIR}/merged}"
+
+MODELS_ROOT_HOST="${MODELS_ROOT:-${DEFAULT_MODELS_ROOT}}"
+LID_MODEL_PATH_HOST="${LID_MODEL_PATH:-${MODELS_ROOT_HOST}/fasttext/lid.176.bin}"
+NEMO_MODEL_DIR_HOST="${NEMO_MODEL_DIR:-${MODELS_ROOT_HOST}}"
+HF_MODEL_DIR_HOST="${HF_MODEL_DIR:-${MODELS_ROOT_HOST}}"
 
 # Create output directories if they don't exist
-mkdir -p "${SCRIPT_DIR}/inputs" "${SCRIPT_DIR}/merged"
+mkdir -p "${INPUTS_DIR}" "${MERGED_DIR}"
 
-# Pre-flight: fix root-owned files from previous Docker runs
-# Singularity runs as the current user, so root-owned files will cause PermissionErrors
-for dir in inputs merged; do
-    target="${SCRIPT_DIR}/${dir}"
-    if [[ -d "${target}" ]] && find "${target}" -maxdepth 1 ! -writable -print -quit 2>/dev/null | grep -q .; then
-        echo "Fixing permissions on ${dir}/ (root-owned files from Docker)..."
-        sudo chown -R "$(whoami)" "${target}"
-    fi
-done
+# Fail fast on bad paths instead of trying sudo/chown fixes.
+[[ -d "${INGESTION_DIR}" ]] || { echo "Ingestion directory not found: ${INGESTION_DIR}"; exit 1; }
+[[ -w "${INPUTS_DIR}" ]] || { echo "Inputs directory is not writable: ${INPUTS_DIR}"; exit 1; }
+[[ -w "${MERGED_DIR}" ]] || { echo "Merged directory is not writable: ${MERGED_DIR}"; exit 1; }
+[[ -f "${LID_MODEL_PATH_HOST}" ]] || { echo "Language-ID model not found: ${LID_MODEL_PATH_HOST}"; exit 1; }
+[[ -d "${NEMO_MODEL_DIR_HOST}" ]] || { echo "NeMo model directory not found: ${NEMO_MODEL_DIR_HOST}"; exit 1; }
+[[ -d "${HF_MODEL_DIR_HOST}" ]] || { echo "HF model directory not found: ${HF_MODEL_DIR_HOST}"; exit 1; }
 
-if [[ -e "${LID_MODEL_PATH_HOST}" && ! -w "${LID_MODEL_PATH_HOST}" ]]; then
-    echo "Fixing permissions on language-ID model ${LID_MODEL_PATH_HOST}..."
-    sudo chown "$(whoami)" "${LID_MODEL_PATH_HOST}"
+# GPU support if available
+GPU_FLAG=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+    GPU_FLAG="--nv"
 fi
 
-if [[ -d "${NEMO_MODEL_DIR_HOST}" ]] && find "${NEMO_MODEL_DIR_HOST}" -maxdepth 1 ! -writable -print -quit 2>/dev/null | grep -q .; then
-    echo "Fixing permissions on NeMo model directory ${NEMO_MODEL_DIR_HOST}..."
-    sudo chown -R "$(whoami)" "${NEMO_MODEL_DIR_HOST}"
-fi
-
-if [[ -d "${HF_MODEL_DIR_HOST}" ]] && find "${HF_MODEL_DIR_HOST}" -maxdepth 1 ! -writable -print -quit 2>/dev/null | grep -q .; then
-    echo "Fixing permissions on HuggingFace model directory ${HF_MODEL_DIR_HOST}..."
-    sudo chown -R "$(whoami)" "${HF_MODEL_DIR_HOST}"
-fi
-
-# Run the pipeline
 echo "==========================================================="
 echo "Running FSP pipeline via ${RUNNER}"
 echo "Image: ${SIF}"
@@ -82,12 +75,20 @@ echo "HF dir: ${HF_MODEL_DIR_HOST}"
 echo "Args: ${*:-<batch mode>}"
 echo "==========================================================="
 
-${RUNNER} exec \
-    --bind "${SCRIPT_DIR}/ingestion:/app/ingestion" \
-    --bind "${SCRIPT_DIR}/inputs:/app/inputs" \
-    --bind "${SCRIPT_DIR}/merged:/app/merged" \
-    --bind "${LID_MODEL_PATH_HOST}:/app/utils/models/lid.176.bin" \
-    --bind "${NEMO_MODEL_DIR_HOST}:/app/utils/models/nemo" \
-    --bind "${HF_MODEL_DIR_HOST}:/app/utils/models/huggingface" \
+exec "${RUNNER}" exec ${GPU_FLAG} \
+    --bind "${INGESTION_DIR}:/app/ingestion" \
+    --bind "${INPUTS_DIR}:/app/inputs" \
+    --bind "${MERGED_DIR}:/app/merged" \
+    --bind "${SCRIPT_DIR}/NeMo:/app/NeMo:ro" \
+    --bind "${SCRIPT_DIR}/fsp:/app/fsp:ro" \
+    --bind "${SCRIPT_DIR}/pipeline_service.py:/app/pipeline_service.py:ro" \
+    --bind "${LID_MODEL_PATH_HOST}:/app/utils/models/lid.176.bin:ro" \
+    --bind "${NEMO_MODEL_DIR_HOST}:/app/utils/models/nemo:ro" \
+    --bind "${HF_MODEL_DIR_HOST}:/app/utils/models/huggingface:ro" \
+    --env MODELS_ROOT=/app/utils/models \
+    --env MODEL_DIR=/app/utils/models \
+    --env LID_MODEL_PATH=/app/utils/models/lid.176.bin \
+    --env NEMO_MODEL_DIR=/app/utils/models/nemo \
+    --env HF_MODEL_DIR=/app/utils/models/huggingface \
     "${SIF}" \
     python /app/pipeline_service.py "$@"
