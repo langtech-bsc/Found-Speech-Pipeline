@@ -50,6 +50,12 @@ def main() -> None:
         help="Minimum segment duration in seconds",
     )
     ap.add_argument(
+        "--device",
+        choices=("auto", "cuda", "cpu"),
+        default="auto",
+        help="Run ASR on cuda / cpu",
+    )
+    ap.add_argument(
         "--lid-model-path",
         type=Path,
         help=f"Path to lid.176.bin (default: ${LID_MODEL_PATH_ENV_VAR} or utils/models/lid.176.bin)",
@@ -76,6 +82,7 @@ def main() -> None:
     # Create pipeline instance
     pipeline = Pipeline(
         lang=args.lang,
+        device=args.device,
         max_duration=args.max_duration,
         min_duration=args.min_duration,
         lid_model_path=args.lid_model_path,

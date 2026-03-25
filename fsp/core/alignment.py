@@ -20,7 +20,12 @@ from loguru import logger
 
 from fsp.core.text import clean_text
 from fsp.utils.language import choose_language
-from fsp.utils.models import configure_model_environment, load_model, unload_model
+from fsp.utils.models import (
+    configure_model_environment,
+    find_local_nemo_checkpoint,
+    load_model,
+    unload_model,
+)
 from fsp.utils.paths import ALIGN_DIR, MANIFEST_DIR, NORM_DIR, OUTPUT_SEGMENT_DIR, ROOT
 
 if TYPE_CHECKING:
@@ -28,21 +33,17 @@ if TYPE_CHECKING:
 
 
 # Model catalogue
-MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
+MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "ca": (
-        ("whisper_ca_3catparla", "pipe", "projecte-aina/whisper-large-v3-ca-3catparla"),
-        ("whisper_bsc_cat", "pipe", "langtech-veu/whisper-bsc-large-v3-cat"),
-        ("whisper_ca_punct_3370h", "pipe", "langtech-veu/whisper-large-v3-ca-punctuated-3370h"),
-        (
-            "stt_ca_es_conformer_transducer_large",
-            "rnnt",
-            "projecte-aina/stt_ca-es_conformer_transducer_large",
-        ),
+        ("whisper-large-v3-ca-3catparla", "pipe"),
+        ("Whisper-bsc-large-v3-cat", "pipe"),
+        ("whisper-large-v3-ca-punctuated-3370h", "pipe"),
+        ("stt_ca-es_conformer_transducer_large", "rnnt"),
     ),
     "es": (
-        ("parakeet_rnnt_es", "rnnt", "projecte-aina/parakeet-rnnt-1.1b_cv17_es_ep18_1270h"),
-        ("stt_es_conformer_transducer_large", "rnnt", "nvidia/stt_es_conformer_transducer_large"),
-        ("whisper_large_v3", "pipe", "openai/whisper-large-v3"),
+        ("parakeet-rnnt-1.1b_cv17_es_ep18_1270h", "rnnt"),
+        ("stt_es_conformer_transducer_large", "rnnt"),
+        ("whisper-large-v3", "pipe"),
     ),
 }
 
@@ -52,6 +53,13 @@ CTC_MODELS = {
 }
 
 LEGACY_KEYS = {"pred_text", "cer_score"}
+
+
+def _clean_alignment_text(text: str, lang: str) -> str:
+    """Normalize text for alignment while preserving segment separators."""
+    parts = [part.strip() for part in text.split("|")]
+    cleaned_parts = [clean_text(part, lang, False, False) for part in parts if part.strip()]
+    return "|".join(part for part in cleaned_parts if part)
 
 
 def _clean_singleton_json_array(txt: str) -> str:
@@ -151,7 +159,7 @@ def build_manifest(meta_path: Path, lid_model: "fasttext.FastText._FastText") ->
             continue
 
         lang, conf = choose_language(src_norm, lid_model)
-        cleaned_normalized = clean_text(src_norm, lang, False, False)
+        cleaned_normalized = _clean_alignment_text(src_norm, lang)
 
         entries.append(
             {
@@ -256,22 +264,11 @@ def generate_final_data(
     start = time.perf_counter()
     output_name = output_name or f"final_output_{input_id}.json"
 
-    if not model_paths.lid_model_path.is_file():
-        raise FileNotFoundError(f"language-ID model not found: {model_paths.lid_model_path}")
-    lid_model = fasttext.load_model(str(model_paths.lid_model_path))
-
-    # Load CTC model
-    primary_model_name = CTC_MODELS[lang]
-    local_nemo = model_paths.nemo_model_dir / f"{primary_model_name}.nemo"
-
-    if local_nemo.is_file():
-        logger.info(f"Loading local NeMo model: {local_nemo}")
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
-    else:
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(primary_model_name)
-
-    ca_asr = primary_asr if lang == "ca" else None
-    es_asr = primary_asr if lang == "es" else None
+    resolved_lid_model = model_paths.lid_model_path
+    if not resolved_lid_model.is_file():
+        raise FileNotFoundError(f"language-ID model not found: {resolved_lid_model}")
+    logger.info(f"Loading language-ID model: {resolved_lid_model}")
+    lid_model = fasttext.load_model(str(resolved_lid_model))
 
     resolved_device = (
         "cpu"
@@ -282,6 +279,27 @@ def generate_final_data(
             else "cpu"
         )
     )
+
+    # Load CTC model
+    primary_model_name = CTC_MODELS[lang]
+    local_nemo = find_local_nemo_checkpoint(
+        primary_model_name,
+        nemo_model_dir=model_paths.nemo_model_dir,
+    )
+
+    if local_nemo is not None and local_nemo.is_file():
+        logger.info(f"Loading local NeMo model: {local_nemo}")
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(
+            str(local_nemo),
+            map_location=resolved_device,
+        )
+    else:
+        raise FileNotFoundError(
+            f"Primary NeMo model not found locally under {model_paths.nemo_model_dir}: {primary_model_name}"
+        )
+
+    ca_asr = primary_asr if lang == "ca" else None
+    es_asr = primary_asr if lang == "es" else None
 
     # Paths
     norm_root = NORM_DIR / input_id
@@ -331,21 +349,21 @@ def generate_final_data(
         logger.info(f"\nProcessing language: {seg_lang}, number of segments: {len(segs)}")
         if not segs:
             continue
-        for name, kind, repo in MODELS_BY_LANG[seg_lang]:
+        for model_dir_name, kind in MODELS_BY_LANG[seg_lang]:
             model = None
             try:
-                logging.info("loading %s", repo)
+                logging.info("loading %s", model_dir_name)
                 model = load_model(
                     kind,
-                    repo,
+                    model_dir_name,
                     resolved_device,
                     nemo_model_dir=model_paths.nemo_model_dir,
                     hf_model_dir=model_paths.hf_model_dir,
                 )
-                logger.info(f"Model {name} loaded on device {resolved_device}")
+                logger.info(f"Model {model_dir_name} loaded on device {resolved_device}")
                 for r in segs:
-                    key = f"pred_text_{name}"
-                    norm_key = f"norm_text_{name}"
+                    key = f"pred_text_{model_dir_name}"
+                    norm_key = f"norm_text_{model_dir_name}"
                     transcription = ""
                     if r.get(key):
                         continue
@@ -353,22 +371,22 @@ def generate_final_data(
                         transcription = transcribe(model, kind, r["segment_path"])
                         r[key] = transcription
                     except Exception as err:
-                        logging.warning("%s on %s: %s", repo, r["segment_path"], err)
+                        logging.warning("%s on %s: %s", model_dir_name, r["segment_path"], err)
                         r[key] = ""
                     try:
                         r[norm_key] = clean_text(transcription, seg_lang, False, False)
                     except Exception as err:
-                        logging.warning("[norm_script:] %s on %s: %s", repo, r["segment_path"], err)
+                        logging.warning("[norm_script:] %s on %s: %s", model_dir_name, r["segment_path"], err)
                         r[norm_key] = ""
             except Exception as err:
-                logging.warning("Could not load model %s (%s): %s — skipping", name, repo, err)
-                logger.warning(f"Skipping model {name}: {err}")
+                logging.warning("Could not load model %s: %s - skipping", model_dir_name, err)
+                logger.warning(f"Skipping model {model_dir_name}: {err}")
             finally:
                 unload_model(model)
 
     # 4. Write JSON
     final_fp = OUTPUT_SEGMENT_DIR / output_name
-    final_fp.write_text(json.dumps(combined, indent=2, ensure_ascii=False))
+    final_fp.write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info(f"JSON written to {final_fp} ({time.perf_counter() - start:.1f}s)")
 
     return final_fp
