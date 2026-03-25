@@ -15,8 +15,13 @@ from loguru import logger
 from fsp.utils.paths import (
     HF_MODEL_DIR_ENV_VAR,
     LID_MODEL_PATH_ENV_VAR,
+    MODEL_DIR_ENV_VAR,
+    MODELS_ROOT_ENV_VAR,
     NEMO_MODEL_DIR_ENV_VAR,
     ModelPaths,
+    resolve_hf_model_dir,
+    resolve_model_dir,
+    resolve_nemo_model_dir,
     resolve_model_paths,
 )
 
@@ -34,24 +39,45 @@ def configure_model_environment(
         nemo_model_dir=nemo_model_dir,
         hf_model_dir=hf_model_dir,
     )
+    model_root = resolve_model_dir()
     hf_home = model_paths.hf_model_dir
     hf_hub_cache = hf_home / "hub"
     nemo_cache_dir = model_paths.nemo_model_dir
 
+    os.environ[MODELS_ROOT_ENV_VAR] = str(model_root)
     os.environ[LID_MODEL_PATH_ENV_VAR] = str(model_paths.lid_model_path)
+    os.environ[MODEL_DIR_ENV_VAR] = str(model_root)
     os.environ[NEMO_MODEL_DIR_ENV_VAR] = str(model_paths.nemo_model_dir)
     os.environ[HF_MODEL_DIR_ENV_VAR] = str(model_paths.hf_model_dir)
     os.environ["HF_HOME"] = str(hf_home)
     os.environ["HF_HUB_CACHE"] = str(hf_hub_cache)
     os.environ["TRANSFORMERS_CACHE"] = str(hf_hub_cache)
     os.environ["NEMO_CACHE_DIR"] = str(nemo_cache_dir)
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_HUB_OFFLINE"] = "1"
 
     return model_paths
+
+def find_local_nemo_checkpoint(
+    model_name: str,
+    nemo_model_dir: Union[str, Path, None] = None,
+) -> Path | None:
+    """Resolve a local NeMo checkpoint without remote fallback."""
+    nemo_root = resolve_nemo_model_dir(nemo_model_dir)
+    nested_checkpoint = nemo_root / model_name / f"{model_name}.nemo"
+    direct_checkpoint = nemo_root / f"{model_name}.nemo"
+
+    if nested_checkpoint.is_file():
+        return nested_checkpoint
+    if direct_checkpoint.is_file():
+        return direct_checkpoint
+
+    return None
 
 
 def load_model(
     kind: str,
-    repo: str,
+    model_name: str,
     device: str,
     nemo_model_dir: Union[str, Path, None] = None,
     hf_model_dir: Union[str, Path, None] = None,
@@ -61,10 +87,10 @@ def load_model(
 
     Args:
         kind: Model type ('pipe', 'rnnt', or 'multi')
-        repo: Model repository/name
+        model_name: Explicit local model folder name
         device: Device to load model on ('cuda' or 'cpu')
         nemo_model_dir: Directory containing local NeMo checkpoints
-        hf_model_dir: Directory containing the HuggingFace cache root
+        hf_model_dir: Directory containing local HuggingFace model folders
 
     Returns:
         Loaded model object
@@ -75,20 +101,35 @@ def load_model(
         from transformers import pipeline as hf_pipeline
 
         dtype = torch.float16 if device.startswith("cuda") else torch.float32
+        local_model_dir = resolve_hf_model_dir(hf_model_dir) / model_name
+        if not local_model_dir.is_dir():
+            raise FileNotFoundError(f"HF model directory not found: {local_model_dir}")
         return hf_pipeline(
             "automatic-speech-recognition",
-            model=repo,
+            model=str(local_model_dir),
+            tokenizer=str(local_model_dir),
+            feature_extractor=str(local_model_dir),
             device=-1 if device == "cpu" else 0,
             torch_dtype=dtype,
         )
     if kind == "rnnt":
         from nemo.collections.asr.models.rnnt_bpe_models import EncDecRNNTBPEModel
 
-        return EncDecRNNTBPEModel.from_pretrained(repo, map_location=device).to(device).eval()
+        restore_path = find_local_nemo_checkpoint(model_name, nemo_model_dir=nemo_model_dir)
+        if restore_path is None:
+            raise FileNotFoundError(
+                f"NeMo checkpoint not found: {resolve_nemo_model_dir(nemo_model_dir) / model_name / f'{model_name}.nemo'}"
+            )
+        return EncDecRNNTBPEModel.restore_from(str(restore_path), map_location=device).to(device).eval()
     if kind == "multi":
         from nemo.collections.asr.models.aed_multitask_models import EncDecMultiTaskModel
 
-        m = EncDecMultiTaskModel.from_pretrained(repo, map_location=device).to(device).eval()
+        restore_path = find_local_nemo_checkpoint(model_name, nemo_model_dir=nemo_model_dir)
+        if restore_path is None:
+            raise FileNotFoundError(
+                f"NeMo checkpoint not found: {resolve_nemo_model_dir(nemo_model_dir) / model_name / f'{model_name}.nemo'}"
+            )
+        m = EncDecMultiTaskModel.restore_from(str(restore_path), map_location=device).to(device).eval()
         m.cfg.prompt_format = m.prompt_format = "canary"
         m.cfg.decoding.beam.beam_size = 1
         m.change_decoding_strategy(m.cfg.decoding)
@@ -168,4 +209,5 @@ __all__ = [
     "unload_model",
     "download_nemo_ctc",
     "download_hf_model",
+    "find_local_nemo_checkpoint",
 ]
