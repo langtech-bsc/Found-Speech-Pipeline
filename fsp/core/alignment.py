@@ -151,7 +151,7 @@ def build_manifest(meta_path: Path, lid_model: "fasttext.FastText._FastText") ->
             continue
 
         lang, conf = choose_language(src_norm, lid_model)
-        cleaned_normalized = clean_text(src_norm, lang, False, False)
+        cleaned_normalized = clean_text(src_norm, lang, False, True)
 
         entries.append(
             {
@@ -260,19 +260,6 @@ def generate_final_data(
         raise FileNotFoundError(f"language-ID model not found: {model_paths.lid_model_path}")
     lid_model = fasttext.load_model(str(model_paths.lid_model_path))
 
-    # Load CTC model
-    primary_model_name = CTC_MODELS[lang]
-    local_nemo = model_paths.nemo_model_dir / f"{primary_model_name}.nemo"
-
-    if local_nemo.is_file():
-        logger.info(f"Loading local NeMo model: {local_nemo}")
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
-    else:
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(primary_model_name)
-
-    ca_asr = primary_asr if lang == "ca" else None
-    es_asr = primary_asr if lang == "es" else None
-
     resolved_device = (
         "cpu"
         if device == "cpu"
@@ -282,6 +269,26 @@ def generate_final_data(
             else "cpu"
         )
     )
+
+    # Load CTC model
+    primary_model_name = CTC_MODELS[lang]
+    local_nemo = model_paths.nemo_model_dir / f"{primary_model_name}.nemo"
+
+    if local_nemo.is_file():
+        logger.info(f"Loading local NeMo model: {local_nemo}")
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(
+            str(local_nemo),
+            map_location=resolved_device,
+        )
+    else:
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(
+            primary_model_name,
+            map_location=resolved_device,
+        )
+    primary_asr = primary_asr.to(resolved_device).eval()
+
+    ca_asr = primary_asr if lang == "ca" else None
+    es_asr = primary_asr if lang == "es" else None
 
     # Paths
     norm_root = NORM_DIR / input_id
