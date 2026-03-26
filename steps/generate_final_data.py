@@ -10,28 +10,24 @@ CLI wrapper for fsp.core.alignment.generate_final_data
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 from pathlib import Path
+
+from loguru import logger
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from fsp.utils.paths import (
+from fsp.utils.paths import (  # noqa: E402
     HF_MODEL_DIR_ENV_VAR,
     LID_MODEL_PATH_ENV_VAR,
     LOG_DIR,
     NEMO_MODEL_DIR_ENV_VAR,
 )
 
-
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-logging.basicConfig(
-    filename=LOG_DIR / "output.log",
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)s  %(message)s",
-)
+logger.add(LOG_DIR / "output.log", level="INFO")
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,7 +88,7 @@ def main() -> None:
             hf_model_dir=args.hf_model_dir,
         )
     except Exception as exc:  # noqa: BLE001
-        logging.error("Fatal error: %s", exc)
+        logger.error("Fatal error: {}", exc)
         raise
 
 

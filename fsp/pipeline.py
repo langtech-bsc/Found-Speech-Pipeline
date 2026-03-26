@@ -45,6 +45,7 @@ class Pipeline:
     def __init__(
         self,
         lang: str = "ca",
+        device: str = "auto",
         max_duration: float = 30,
         min_duration: float = 2,
         lid_model_path: Optional[Path] = None,
@@ -57,6 +58,7 @@ class Pipeline:
 
         Args:
             lang: Primary language ('ca', 'es', 'eu', or 'gl')
+            device: Device for ASR ('auto', 'cuda', 'cpu')
             max_duration: Maximum segment duration in seconds
             min_duration: Minimum segment duration in seconds
             lid_model_path: Path to the FastText language-ID model file
@@ -64,7 +66,11 @@ class Pipeline:
             hf_model_dir: Directory containing the HuggingFace cache root
             enable_gl_extra_asr: Whether to run the GL-only sidecar enrichment
         """
+        if device not in ("auto", "cuda", "cpu"):
+            raise ValueError("device must be 'auto', 'cuda', or 'cpu'")
+
         self.lang = lang
+        self.device = device
         self.max_duration = max_duration
         self.min_duration = min_duration
         self.lid_model_path = resolve_lid_model_path(lid_model_path)
@@ -72,7 +78,7 @@ class Pipeline:
         self.hf_model_dir = resolve_hf_model_dir(hf_model_dir)
         self.enable_gl_extra_asr = enable_gl_extra_asr
 
-    def normalize_tsv(self, input_tsv: Path, lang: str, mark: str = ". ") -> Path:
+    def normalize_tsv(self, input_tsv: Path, lang: str, mark: str = "|") -> Path:
         """
         Normalize a TSV file (Step 1).
 
@@ -141,7 +147,7 @@ class Pipeline:
         input_id: str,
         lang: Optional[str] = None,
         output_name: Optional[str] = None,
-        device: str = "auto",
+        device: Optional[str] = None,
         lid_model_path: Optional[Path] = None,
         nemo_model_dir: Optional[Path] = None,
         hf_model_dir: Optional[Path] = None,
@@ -162,6 +168,7 @@ class Pipeline:
             Path to the output JSON file
         """
         lang = lang or self.lang
+        device = device or self.device
         return generate_final_data(
             input_id=input_id,
             lang=lang,

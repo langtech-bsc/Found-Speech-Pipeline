@@ -248,7 +248,7 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
     # Write outputs
     out_json = config.out_dir / path.name
     out_json.parent.mkdir(parents=True, exist_ok=True)
-    out_json.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    out_json.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if config.csv and pd and rows:
         pd.DataFrame(rows).to_csv(out_json.with_suffix(".csv"), index=False)

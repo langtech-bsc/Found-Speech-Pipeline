@@ -15,10 +15,14 @@ from loguru import logger
 from fsp.utils.paths import (
     HF_MODEL_DIR_ENV_VAR,
     LID_MODEL_PATH_ENV_VAR,
+    MODEL_DIR_ENV_VAR,
+    MODELS_ROOT_ENV_VAR,
     NEMO_MODEL_DIR_ENV_VAR,
     ModelPaths,
-    resolve_model_reference,
+    resolve_model_dir,
     resolve_model_paths,
+    resolve_model_reference,
+    resolve_nemo_model_dir,
 )
 
 
@@ -46,24 +50,46 @@ def configure_model_environment(
         nemo_model_dir=nemo_model_dir,
         hf_model_dir=hf_model_dir,
     )
+    model_root = resolve_model_dir()
     hf_home = model_paths.hf_model_dir
     hf_hub_cache = hf_home / "hub"
     nemo_cache_dir = model_paths.nemo_model_dir
 
+    os.environ[MODELS_ROOT_ENV_VAR] = str(model_root)
     os.environ[LID_MODEL_PATH_ENV_VAR] = str(model_paths.lid_model_path)
+    os.environ[MODEL_DIR_ENV_VAR] = str(model_root)
     os.environ[NEMO_MODEL_DIR_ENV_VAR] = str(model_paths.nemo_model_dir)
     os.environ[HF_MODEL_DIR_ENV_VAR] = str(model_paths.hf_model_dir)
     os.environ["HF_HOME"] = str(hf_home)
     os.environ["HF_HUB_CACHE"] = str(hf_hub_cache)
     os.environ["TRANSFORMERS_CACHE"] = str(hf_hub_cache)
     os.environ["NEMO_CACHE_DIR"] = str(nemo_cache_dir)
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_HUB_OFFLINE"] = "1"
 
     return model_paths
 
 
+def find_local_nemo_checkpoint(
+    model_name: str,
+    nemo_model_dir: Union[str, Path, None] = None,
+) -> Path | None:
+    """Resolve a local NeMo checkpoint without remote fallback."""
+    nemo_root = resolve_nemo_model_dir(nemo_model_dir)
+    nested_checkpoint = nemo_root / model_name / f"{model_name}.nemo"
+    direct_checkpoint = nemo_root / f"{model_name}.nemo"
+
+    if nested_checkpoint.is_file():
+        return nested_checkpoint
+    if direct_checkpoint.is_file():
+        return direct_checkpoint
+
+    return None
+
+
 def load_model(
     kind: str,
-    repo: str,
+    model_name: str,
     device: str,
     nemo_model_dir: Union[str, Path, None] = None,
     hf_model_dir: Union[str, Path, None] = None,
@@ -72,11 +98,11 @@ def load_model(
     Load one ASR model (no global cache so RSS stays small).
 
     Args:
-        kind: Model type ('pipe', 'rnnt', or 'multi')
-        repo: Model repository/name
+        kind: Model type ('pipe', 'rnnt', 'ctc', or 'multi')
+        model_name: Local model name, path, or repository identifier
         device: Device to load model on ('cuda' or 'cpu')
         nemo_model_dir: Directory containing local NeMo checkpoints
-        hf_model_dir: Directory containing the HuggingFace cache root
+        hf_model_dir: Directory containing local HuggingFace model folders
 
     Returns:
         Loaded model object
@@ -87,36 +113,67 @@ def load_model(
         from transformers import pipeline as hf_pipeline
 
         dtype = torch.float16 if device.startswith("cuda") else torch.float32
-        return hf_pipeline(
-            "automatic-speech-recognition",
-            model=repo,
-            device=-1 if device == "cpu" else 0,
-            torch_dtype=dtype,
-        )
+        resolved_model = resolve_model_reference(model_name, kind, hf_model_dir=hf_model_dir)
+        kwargs: dict[str, Any] = {
+            "task": "automatic-speech-recognition",
+            "model": str(resolved_model),
+            "device": -1 if device == "cpu" else 0,
+            "torch_dtype": dtype,
+        }
+        if resolved_model.is_dir():
+            kwargs["tokenizer"] = str(resolved_model)
+            kwargs["feature_extractor"] = str(resolved_model)
+        return hf_pipeline(**kwargs)
     if kind == "rnnt":
         from nemo.collections.asr.models.rnnt_bpe_models import EncDecRNNTBPEModel
 
-        resolved_repo = resolve_model_reference(repo, kind, nemo_model_dir=nemo_model_dir, hf_model_dir=hf_model_dir)
+        resolved_repo = resolve_model_reference(
+            model_name,
+            kind,
+            nemo_model_dir=nemo_model_dir,
+            hf_model_dir=hf_model_dir,
+        )
         nemo_file = _find_nemo_file(resolved_repo)
+        if nemo_file is None:
+            nemo_file = find_local_nemo_checkpoint(Path(model_name).name, nemo_model_dir=nemo_model_dir)
         if nemo_file:
             return EncDecRNNTBPEModel.restore_from(str(nemo_file), map_location=device).to(device).eval()
         return EncDecRNNTBPEModel.from_pretrained(str(resolved_repo), map_location=device).to(device).eval()
     if kind == "ctc":
         import nemo.collections.asr as nemo_asr
 
-        resolved_repo = resolve_model_reference(repo, kind, nemo_model_dir=nemo_model_dir, hf_model_dir=hf_model_dir)
+        resolved_repo = resolve_model_reference(
+            model_name,
+            kind,
+            nemo_model_dir=nemo_model_dir,
+            hf_model_dir=hf_model_dir,
+        )
         nemo_file = _find_nemo_file(resolved_repo)
+        if nemo_file is None:
+            nemo_file = find_local_nemo_checkpoint(Path(model_name).name, nemo_model_dir=nemo_model_dir)
         if nemo_file:
             return nemo_asr.models.EncDecCTCModelBPE.restore_from(str(nemo_file), map_location=device).to(device).eval()
         return nemo_asr.models.EncDecCTCModelBPE.from_pretrained(str(resolved_repo), map_location=device).to(device).eval()
     if kind == "multi":
         from nemo.collections.asr.models.aed_multitask_models import EncDecMultiTaskModel
 
-        m = EncDecMultiTaskModel.from_pretrained(repo, map_location=device).to(device).eval()
-        m.cfg.prompt_format = m.prompt_format = "canary"
-        m.cfg.decoding.beam.beam_size = 1
-        m.change_decoding_strategy(m.cfg.decoding)
-        return m
+        resolved_repo = resolve_model_reference(
+            model_name,
+            kind,
+            nemo_model_dir=nemo_model_dir,
+            hf_model_dir=hf_model_dir,
+        )
+        nemo_file = _find_nemo_file(resolved_repo)
+        if nemo_file is None:
+            nemo_file = find_local_nemo_checkpoint(Path(model_name).name, nemo_model_dir=nemo_model_dir)
+        if nemo_file:
+            model = EncDecMultiTaskModel.restore_from(str(nemo_file), map_location=device).to(device).eval()
+        else:
+            model = EncDecMultiTaskModel.from_pretrained(str(resolved_repo), map_location=device).to(device).eval()
+        model.cfg.prompt_format = model.prompt_format = "canary"
+        model.cfg.decoding.beam.beam_size = 1
+        model.change_decoding_strategy(model.cfg.decoding)
+        return model
     raise ValueError(f"Unknown model kind: {kind}")
 
 
@@ -153,11 +210,9 @@ def download_nemo_ctc(model_name: str, out_dir: Path) -> None:
     logger.info(f"  Downloading NeMo model: {model_name} ...")
     model = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(model_name)
 
-    # Save to our local directory
     model.save_to(str(out_path))
     logger.info(f"  Saved to: {out_path}")
 
-    # Clean up RAM
     unload_model(model)
 
 
@@ -192,4 +247,5 @@ __all__ = [
     "unload_model",
     "download_nemo_ctc",
     "download_hf_model",
+    "find_local_nemo_checkpoint",
 ]
