@@ -22,7 +22,7 @@ from transformers import (
     pipeline as hf_pipeline,
 )
 
-from fsp.utils.paths import ROOT, resolve_model_reference
+from fsp.utils.paths import ROOT, resolve_hf_model_dir
 
 LOG = logging.getLogger("hf_enrich")
 
@@ -277,11 +277,7 @@ def enrich_json(
     LOG.info("Selected models: %s", ", ".join(spec.name for spec in specs) or "<none>")
 
     for spec in specs:
-        repo_path = resolve_model_reference(
-            spec.repo_name,
-            spec.kind,
-            hf_model_dir=hf_model_dir,
-        )
+        repo_path = resolve_hf_model_dir(hf_model_dir) / spec.repo_name
         if not repo_path.exists():
             LOG.warning("Model path not found for %s: %s", spec.name, repo_path)
             continue

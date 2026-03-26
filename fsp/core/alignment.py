@@ -26,14 +26,7 @@ from fsp.utils.models import (
     load_model,
     unload_model,
 )
-from fsp.utils.paths import (
-    ALIGN_DIR,
-    MANIFEST_DIR,
-    NORM_DIR,
-    OUTPUT_SEGMENT_DIR,
-    ROOT,
-    resolve_model_reference,
-)
+from fsp.utils.paths import ALIGN_DIR, MANIFEST_DIR, NORM_DIR, OUTPUT_SEGMENT_DIR, ROOT
 
 if TYPE_CHECKING:
     import fasttext
@@ -41,19 +34,15 @@ if TYPE_CHECKING:
 
 MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
     "ca": (
-        ("whisper_ca_3catparla", "pipe", "projecte-aina/whisper-large-v3-ca-3catparla"),
-        ("whisper_bsc_cat", "pipe", "langtech-veu/whisper-bsc-large-v3-cat"),
-        ("whisper_ca_punct_3370h", "pipe", "langtech-veu/whisper-large-v3-ca-punctuated-3370h"),
-        (
-            "stt_ca_es_conformer_transducer_large",
-            "rnnt",
-            "projecte-aina/stt_ca-es_conformer_transducer_large",
-        ),
+        ("whisper_ca_3catparla", "pipe", "whisper-large-v3-ca-3catparla"),
+        ("whisper_bsc_cat", "pipe", "whisper-bsc-large-v3-cat"),
+        ("whisper_ca_punct_3370h", "pipe", "whisper-large-v3-ca-punctuated-3370h"),
+        ("stt_ca_es_conformer_transducer_large", "rnnt", "stt_ca-es_conformer_transducer_large"),
     ),
     "es": (
-        ("parakeet_rnnt_es", "rnnt", "projecte-aina/parakeet-rnnt-1.1b_cv17_es_ep18_1270h"),
-        ("stt_es_conformer_transducer_large", "rnnt", "nvidia/stt_es_conformer_transducer_large"),
-        ("whisper_large_v3", "pipe", "openai/whisper-large-v3"),
+        ("parakeet_rnnt_es", "rnnt", "parakeet-rnnt-1.1b_cv17_es_ep18_1270h"),
+        ("stt_es_conformer_transducer_large", "rnnt", "stt_es_conformer_transducer_large"),
+        ("whisper_large_v3", "pipe", "whisper-large-v3"),
     ),
     "eu": (
         ("stt_eu_conformer_transducer_large", "rnnt", "stt_eu_conformer_transducer_large"),
@@ -108,16 +97,6 @@ def _clean_singleton_json_array(txt: str) -> str:
         pass
     return s[2:-2].strip()
 
-
-def _find_nemo_file(path: str | Path) -> Path | None:
-    candidate = Path(path)
-    if candidate.is_file() and candidate.suffix == ".nemo":
-        return candidate
-    if candidate.is_dir():
-        nemo_files = sorted(candidate.glob("*.nemo"))
-        if nemo_files:
-            return nemo_files[0]
-    return None
 
 
 def transcribe(model: Any, kind: str, audio: str, lang: str = "ca") -> str:
@@ -275,18 +254,10 @@ def generate_final_data(
     )
 
     primary_model_name = CTC_MODELS[lang]
-    primary_model_ref = resolve_model_reference(
+    local_nemo = find_local_nemo_checkpoint(
         primary_model_name,
-        "ctc",
         nemo_model_dir=model_paths.nemo_model_dir,
-        hf_model_dir=model_paths.hf_model_dir,
     )
-    local_nemo = _find_nemo_file(primary_model_ref)
-    if local_nemo is None:
-        local_nemo = find_local_nemo_checkpoint(
-            primary_model_name,
-            nemo_model_dir=model_paths.nemo_model_dir,
-        )
 
     if local_nemo is not None and local_nemo.is_file():
         logger.info(f"Loading local NeMo model: {local_nemo}")
@@ -296,12 +267,9 @@ def generate_final_data(
         )
         aligner_model_arg = f"model_path={local_nemo}"
     else:
-        logger.info(f"Loading remote NeMo model: {primary_model_ref}")
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(
-            str(primary_model_ref),
-            map_location=resolved_device,
+        raise FileNotFoundError(
+            f"Primary NeMo model not found locally under {model_paths.nemo_model_dir}: {primary_model_name}"
         )
-        aligner_model_arg = f"pretrained_name={primary_model_ref.name}"
 
     ca_asr = primary_asr if lang == "ca" else None
     es_asr = primary_asr if lang == "es" else None
@@ -358,19 +326,13 @@ def generate_final_data(
         logger.info(f"\nProcessing language: {seg_lang}, number of segments: {len(segs)}")
         if not segs:
             continue
-        for name, kind, repo in MODELS_BY_LANG[seg_lang]:
+        for name, kind, model_name in MODELS_BY_LANG[seg_lang]:
             model = None
             try:
-                resolved_repo = resolve_model_reference(
-                    repo,
-                    kind,
-                    nemo_model_dir=model_paths.nemo_model_dir,
-                    hf_model_dir=model_paths.hf_model_dir,
-                )
-                logging.info("loading %s", resolved_repo)
+                logging.info("loading %s", model_name)
                 model = load_model(
                     kind,
-                    str(resolved_repo),
+                    model_name,
                     resolved_device,
                     nemo_model_dir=model_paths.nemo_model_dir,
                     hf_model_dir=model_paths.hf_model_dir,
@@ -385,22 +347,22 @@ def generate_final_data(
                             try:
                                 result[norm_key] = clean_text(transcription, seg_lang, False, False)
                             except Exception as err:
-                                logging.warning("[norm_script:] %s on %s: %s", repo, result["segment_path"], err)
+                                logging.warning("[norm_script:] %s on %s: %s", model_name, result["segment_path"], err)
                                 result[norm_key] = ""
                         continue
                     try:
                         transcription = transcribe(model, kind, result["segment_path"], lang=seg_lang)
                         result[key] = transcription
                     except Exception as err:
-                        logging.warning("%s on %s: %s", resolved_repo, result["segment_path"], err)
+                        logging.warning("%s on %s: %s", model_name, result["segment_path"], err)
                         result[key] = ""
                     try:
                         result[norm_key] = clean_text(transcription, seg_lang, False, False)
                     except Exception as err:
-                        logging.warning("[norm_script:] %s on %s: %s", repo, result["segment_path"], err)
+                        logging.warning("[norm_script:] %s on %s: %s", model_name, result["segment_path"], err)
                         result[norm_key] = ""
             except Exception as err:
-                logging.warning("Could not load model %s (%s): %s - skipping", name, repo, err)
+                logging.warning("Could not load model %s (%s): %s - skipping", name, model_name, err)
                 logger.warning(f"Skipping model {name}: {err}")
             finally:
                 unload_model(model)

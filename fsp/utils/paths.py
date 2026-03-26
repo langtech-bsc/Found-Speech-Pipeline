@@ -17,6 +17,8 @@ MODEL_DIR_ENV_VAR = "MODEL_DIR"
 LID_MODEL_PATH_ENV_VAR = "LID_MODEL_PATH"
 NEMO_MODEL_DIR_ENV_VAR = "NEMO_MODEL_DIR"
 HF_MODEL_DIR_ENV_VAR = "HF_MODEL_DIR"
+IMAGES_DIR_ENV_VAR = "FSP_IMAGES_DIR"
+GL_EXTRA_ASR_IMAGE_NAME = "fsp-gl-extra-asr.sif"
 
 
 @dataclass(frozen=True)
@@ -56,17 +58,12 @@ def resolve_lid_model_path(lid_model_path: str | Path | None = None) -> Path:
     if env_path := os.getenv(LID_MODEL_PATH_ENV_VAR):
         return Path(env_path).expanduser()
 
-    model_dir = resolve_model_dir()
-    candidates = [
-        model_dir / "fasttext" / "lid.176.bin",
-        model_dir / "lid.176.bin",
-    ]
-    return _first_existing_path(candidates) or candidates[0]
+    return resolve_model_dir() / "fasttext" / "lid.176.bin"
 
 
 def resolve_nemo_model_dir(nemo_model_dir: str | Path | None = None) -> Path:
     """
-    Resolve the directory containing local NeMo checkpoints.
+    Resolve the directory containing local NeMo model folders.
     """
     if nemo_model_dir is not None:
         return Path(nemo_model_dir).expanduser()
@@ -74,17 +71,12 @@ def resolve_nemo_model_dir(nemo_model_dir: str | Path | None = None) -> Path:
     if env_path := os.getenv(NEMO_MODEL_DIR_ENV_VAR):
         return Path(env_path).expanduser()
 
-    model_dir = resolve_model_dir()
-    candidates = [
-        model_dir / "nemo",
-        model_dir,
-    ]
-    return _first_existing_path(candidates) or candidates[0]
+    return resolve_model_dir()
 
 
 def resolve_hf_model_dir(hf_model_dir: str | Path | None = None) -> Path:
     """
-    Resolve the directory containing the HuggingFace model cache root.
+    Resolve the directory containing local HuggingFace model folders.
     """
     if hf_model_dir is not None:
         return Path(hf_model_dir).expanduser()
@@ -92,50 +84,34 @@ def resolve_hf_model_dir(hf_model_dir: str | Path | None = None) -> Path:
     if env_path := os.getenv(HF_MODEL_DIR_ENV_VAR):
         return Path(env_path).expanduser()
 
-    model_dir = resolve_model_dir()
+    return resolve_model_dir()
+
+
+def resolve_images_dir(images_dir: str | Path | None = None) -> Path:
+    """
+    Resolve the shared directory that stores Singularity/Apptainer images.
+    """
+    if images_dir is not None:
+        return Path(images_dir).expanduser()
+
+    if env_path := os.getenv(IMAGES_DIR_ENV_VAR):
+        return Path(env_path).expanduser()
+
+    return Path("/gpfs/projects/bsc88/singularity-images/")
+
+
+def resolve_gl_extra_asr_image(images_dir: str | Path | None = None) -> Path:
+    """
+    Resolve the GL extra ASR sidecar image path.
+    """
+    image_dir = resolve_images_dir(images_dir)
     candidates = [
-        model_dir / "huggingface",
-        model_dir,
+        image_dir / GL_EXTRA_ASR_IMAGE_NAME,
+        image_dir / "gl-extra-asr.sif",
+        ROOT / GL_EXTRA_ASR_IMAGE_NAME,
+        ROOT / "gl-extra-asr.sif",
     ]
     return _first_existing_path(candidates) or candidates[0]
-
-
-def resolve_model_reference(
-    repo: str | Path,
-    kind: str,
-    nemo_model_dir: str | Path | None = None,
-    hf_model_dir: str | Path | None = None,
-) -> Path:
-    """
-    Resolve a model reference to a local path when possible.
-
-    The reference may already be an absolute/local path, or a short model name
-    that should be looked up under the configured NeMo or HF roots.
-    """
-    candidate = Path(repo).expanduser()
-    if candidate.exists():
-        return candidate
-
-    direct_name = candidate.name
-    nemo_root = resolve_nemo_model_dir(nemo_model_dir)
-    hf_root = resolve_hf_model_dir(hf_model_dir)
-    search_roots = [hf_root, nemo_root]
-    if kind in {"rnnt", "ctc", "multi"}:
-        search_roots = [nemo_root, hf_root]
-
-    for root in search_roots:
-        options = [
-            root / candidate,
-            root / direct_name,
-            (root / candidate).with_suffix(".nemo"),
-            (root / direct_name).with_suffix(".nemo"),
-            root / direct_name / f"{direct_name}.nemo",
-        ]
-        resolved = _first_existing_path(options)
-        if resolved is not None:
-            return resolved
-
-    return candidate
 
 
 def resolve_model_paths(
@@ -155,6 +131,8 @@ MODELS_DIR = resolve_model_dir()
 LID_MODEL_PATH = resolve_lid_model_path()
 NEMO_MODEL_DIR = resolve_nemo_model_dir()
 HF_MODEL_DIR = resolve_hf_model_dir()
+IMAGES_DIR = resolve_images_dir()
+GL_EXTRA_ASR_IMAGE = resolve_gl_extra_asr_image()
 
 # Directory paths
 SCRIPTS_DIR = ROOT / "scripts"
@@ -180,16 +158,21 @@ __all__ = [
     "LID_MODEL_PATH_ENV_VAR",
     "NEMO_MODEL_DIR_ENV_VAR",
     "HF_MODEL_DIR_ENV_VAR",
+    "IMAGES_DIR_ENV_VAR",
+    "GL_EXTRA_ASR_IMAGE_NAME",
     "MODELS_DIR",
     "LID_MODEL_PATH",
     "NEMO_MODEL_DIR",
     "HF_MODEL_DIR",
+    "IMAGES_DIR",
+    "GL_EXTRA_ASR_IMAGE",
     "resolve_model_dir",
     "resolve_lid_model_path",
     "resolve_nemo_model_dir",
     "resolve_hf_model_dir",
+    "resolve_images_dir",
+    "resolve_gl_extra_asr_image",
     "resolve_model_paths",
-    "resolve_model_reference",
     "SCRIPTS_DIR",
     "STEPS_DIR",
     "INGESTION_DIR",

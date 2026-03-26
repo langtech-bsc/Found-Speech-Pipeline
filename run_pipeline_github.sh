@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=fsp-pipeline
+#SBATCH --qos=acc_debug
 #SBATCH --output=slurm_output/%x_%j.out
 #SBATCH --error=slurm_output/%x_%j.err
 #SBATCH --nodes=1

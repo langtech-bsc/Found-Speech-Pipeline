@@ -19,7 +19,7 @@ from transformers import (
     pipeline,
 )
 
-from fsp.utils.paths import resolve_model_reference
+from fsp.utils.paths import resolve_hf_model_dir
 
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.pipelines.base")
 
@@ -56,7 +56,7 @@ def _is_model_dir(path: Path) -> bool:
 
 
 def resolve_local_model_dir(model_ref: str, hf_model_dir: str | Path | None = None) -> Path:
-    candidate = resolve_model_reference(model_ref, "pipe", hf_model_dir=hf_model_dir)
+    candidate = resolve_hf_model_dir(hf_model_dir) / model_ref
     if _is_model_dir(candidate):
         return candidate
     raise FileNotFoundError(f"Local punctuation model not found for '{model_ref}': {candidate}")

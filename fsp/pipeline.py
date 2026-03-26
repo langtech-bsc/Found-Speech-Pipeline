@@ -19,6 +19,7 @@ from fsp.core.punctuation import process_file as punctuate_file
 from fsp.core.rover import RoverConfig, process_file
 from fsp.core.text import clean_text, remove_chars, split_text
 from fsp.utils.paths import (
+    GL_EXTRA_ASR_IMAGE,
     ROOT,
     INGESTION_DIR,
     NORM_DIR,
@@ -29,7 +30,6 @@ from fsp.utils.paths import (
     resolve_nemo_model_dir,
 )
 
-GL_EXTRA_ASR_IMAGE = ROOT / "gl-extra-asr.sif"
 SINGULARITY_FALLBACK = Path("/apps/GPP/SINGULARITY/3.11.5/bin/singularity")
 
 
@@ -300,15 +300,15 @@ class Pipeline:
         out_json_path = OUTPUT_SEGMENT_DIR / out_json_name
 
         # 1. Normalize TSV
-        logger.info("\nStep 1/5: Normalize TSV")
+        logger.info("\nStep 1/7: Normalize TSV")
         self.normalize_tsv(raw_tsv, self.lang, "|")
 
         # 2. Normalize audio + metadata
-        logger.info("\nStep 2/5: Normalize audio")
+        logger.info("\nStep 2/7: Normalize audio")
         self.normalize_audio(input_id)
 
         # 3. Generate final data
-        logger.info("\nStep 3/5: Generate final data")
+        logger.info("\nStep 3/7: Generate final data")
         self.generate_final_data(input_id, output_name=out_json_name)
 
         # 4. Optional GL extra ASR enrichment

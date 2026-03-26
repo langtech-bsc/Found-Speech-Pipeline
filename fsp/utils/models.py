@@ -19,22 +19,11 @@ from fsp.utils.paths import (
     MODELS_ROOT_ENV_VAR,
     NEMO_MODEL_DIR_ENV_VAR,
     ModelPaths,
+    resolve_hf_model_dir,
     resolve_model_dir,
-    resolve_model_paths,
-    resolve_model_reference,
     resolve_nemo_model_dir,
+    resolve_model_paths,
 )
-
-
-def _find_nemo_file(path: str | Path) -> Path | None:
-    candidate = Path(path)
-    if candidate.is_file() and candidate.suffix == ".nemo":
-        return candidate
-    if candidate.is_dir():
-        nemo_files = sorted(candidate.glob("*.nemo"))
-        if nemo_files:
-            return nemo_files[0]
-    return None
 
 
 def configure_model_environment(
@@ -99,7 +88,7 @@ def load_model(
 
     Args:
         kind: Model type ('pipe', 'rnnt', 'ctc', or 'multi')
-        model_name: Local model name, path, or repository identifier
+        model_name: Explicit local model folder name
         device: Device to load model on ('cuda' or 'cpu')
         nemo_model_dir: Directory containing local NeMo checkpoints
         hf_model_dir: Directory containing local HuggingFace model folders
@@ -113,63 +102,44 @@ def load_model(
         from transformers import pipeline as hf_pipeline
 
         dtype = torch.float16 if device.startswith("cuda") else torch.float32
-        resolved_model = resolve_model_reference(model_name, kind, hf_model_dir=hf_model_dir)
-        kwargs: dict[str, Any] = {
-            "task": "automatic-speech-recognition",
-            "model": str(resolved_model),
-            "device": -1 if device == "cpu" else 0,
-            "torch_dtype": dtype,
-        }
-        if resolved_model.is_dir():
-            kwargs["tokenizer"] = str(resolved_model)
-            kwargs["feature_extractor"] = str(resolved_model)
-        return hf_pipeline(**kwargs)
+        local_model_dir = resolve_hf_model_dir(hf_model_dir) / model_name
+        if not local_model_dir.is_dir():
+            raise FileNotFoundError(f"HF model directory not found: {local_model_dir}")
+        return hf_pipeline(
+            "automatic-speech-recognition",
+            model=str(local_model_dir),
+            tokenizer=str(local_model_dir),
+            feature_extractor=str(local_model_dir),
+            device=-1 if device == "cpu" else 0,
+            torch_dtype=dtype,
+        )
     if kind == "rnnt":
         from nemo.collections.asr.models.rnnt_bpe_models import EncDecRNNTBPEModel
 
-        resolved_repo = resolve_model_reference(
-            model_name,
-            kind,
-            nemo_model_dir=nemo_model_dir,
-            hf_model_dir=hf_model_dir,
-        )
-        nemo_file = _find_nemo_file(resolved_repo)
-        if nemo_file is None:
-            nemo_file = find_local_nemo_checkpoint(Path(model_name).name, nemo_model_dir=nemo_model_dir)
-        if nemo_file:
-            return EncDecRNNTBPEModel.restore_from(str(nemo_file), map_location=device).to(device).eval()
-        return EncDecRNNTBPEModel.from_pretrained(str(resolved_repo), map_location=device).to(device).eval()
+        restore_path = find_local_nemo_checkpoint(model_name, nemo_model_dir=nemo_model_dir)
+        if restore_path is None:
+            raise FileNotFoundError(
+                f"NeMo checkpoint not found: {resolve_nemo_model_dir(nemo_model_dir) / model_name / f'{model_name}.nemo'}"
+            )
+        return EncDecRNNTBPEModel.restore_from(str(restore_path), map_location=device).to(device).eval()
     if kind == "ctc":
         import nemo.collections.asr as nemo_asr
 
-        resolved_repo = resolve_model_reference(
-            model_name,
-            kind,
-            nemo_model_dir=nemo_model_dir,
-            hf_model_dir=hf_model_dir,
-        )
-        nemo_file = _find_nemo_file(resolved_repo)
-        if nemo_file is None:
-            nemo_file = find_local_nemo_checkpoint(Path(model_name).name, nemo_model_dir=nemo_model_dir)
-        if nemo_file:
-            return nemo_asr.models.EncDecCTCModelBPE.restore_from(str(nemo_file), map_location=device).to(device).eval()
-        return nemo_asr.models.EncDecCTCModelBPE.from_pretrained(str(resolved_repo), map_location=device).to(device).eval()
+        restore_path = find_local_nemo_checkpoint(model_name, nemo_model_dir=nemo_model_dir)
+        if restore_path is None:
+            raise FileNotFoundError(
+                f"NeMo checkpoint not found: {resolve_nemo_model_dir(nemo_model_dir) / model_name / f'{model_name}.nemo'}"
+            )
+        return nemo_asr.models.EncDecCTCModelBPE.restore_from(str(restore_path), map_location=device).to(device).eval()
     if kind == "multi":
         from nemo.collections.asr.models.aed_multitask_models import EncDecMultiTaskModel
 
-        resolved_repo = resolve_model_reference(
-            model_name,
-            kind,
-            nemo_model_dir=nemo_model_dir,
-            hf_model_dir=hf_model_dir,
-        )
-        nemo_file = _find_nemo_file(resolved_repo)
-        if nemo_file is None:
-            nemo_file = find_local_nemo_checkpoint(Path(model_name).name, nemo_model_dir=nemo_model_dir)
-        if nemo_file:
-            model = EncDecMultiTaskModel.restore_from(str(nemo_file), map_location=device).to(device).eval()
-        else:
-            model = EncDecMultiTaskModel.from_pretrained(str(resolved_repo), map_location=device).to(device).eval()
+        restore_path = find_local_nemo_checkpoint(model_name, nemo_model_dir=nemo_model_dir)
+        if restore_path is None:
+            raise FileNotFoundError(
+                f"NeMo checkpoint not found: {resolve_nemo_model_dir(nemo_model_dir) / model_name / f'{model_name}.nemo'}"
+            )
+        model = EncDecMultiTaskModel.restore_from(str(restore_path), map_location=device).to(device).eval()
         model.cfg.prompt_format = model.prompt_format = "canary"
         model.cfg.decoding.beam.beam_size = 1
         model.change_decoding_strategy(model.cfg.decoding)
@@ -209,10 +179,8 @@ def download_nemo_ctc(model_name: str, out_dir: Path) -> None:
 
     logger.info(f"  Downloading NeMo model: {model_name} ...")
     model = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(model_name)
-
     model.save_to(str(out_path))
     logger.info(f"  Saved to: {out_path}")
-
     unload_model(model)
 
 
