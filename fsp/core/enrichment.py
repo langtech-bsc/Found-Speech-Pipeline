@@ -158,6 +158,7 @@ def load_whisper_seq2seq(repo_path: Path, device: str) -> Any:
 def transcribe_whisper_seq2seq(model: dict[str, Any], audio_path: Path, lang: str) -> str:
     out = model["pipe"](
         str(audio_path),
+        return_timestamps=True,
         generate_kwargs={"task": "transcribe", "language": lang},
     )
     if isinstance(out, dict):

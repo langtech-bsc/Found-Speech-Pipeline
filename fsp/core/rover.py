@@ -188,6 +188,9 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
 
     if not flat_results:
         logger.warning(f"[{path.name}] No segments found (filtered out?). Skipping.")
+        out_json = config.out_dir / path.name
+        out_json.parent.mkdir(parents=True, exist_ok=True)
+        out_json.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         return 0.0, 0.0, 0
 
     rows: List[Dict] = []

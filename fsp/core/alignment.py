@@ -19,7 +19,7 @@ import torch
 from loguru import logger
 
 from fsp.core.text import clean_apostrophes, clean_text
-from fsp.utils.language import choose_language
+from fsp.utils.language import choose_language, choose_language_from_predictions, predict_languages
 from fsp.utils.models import (
     configure_model_environment,
     find_local_nemo_checkpoint,
@@ -54,12 +54,10 @@ MODELS_BY_LANG: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
         ("whisper_large_eu", "pipe", "whisper-large-eu"),
         ("whisper_large_v2_eu", "pipe", "whisper-large-v2-eu"),
         ("whisper_large_v3_eu", "pipe", "whisper-large-v3-eu"),
-        ("whisper_large_v3_fallback", "pipe", "whisper-large-v3"),
     ),
     "gl": (
         ("stt_gl_conformer_ctc_large", "ctc", "stt_gl_conformer_ctc_large"),
         ("whisper_large_v3_gl", "pipe", "whisper-large-v3-gl"),
-        ("whisper_large_v3_fallback", "pipe", "whisper-large-v3"),
     ),
 }
 
@@ -71,6 +69,11 @@ CTC_MODELS = {
 }
 
 LEGACY_KEYS = {"pred_text", "cer_score"}
+
+
+def _format_language_predictions(predictions: List[Tuple[str, float]]) -> str:
+    """Render FastText predictions for debug logging."""
+    return ", ".join(f"{lang}={conf:.2f}" for lang, conf in predictions)
 
 
 def _clean_alignment_text(text: str, lang: str) -> str:
@@ -303,11 +306,34 @@ def generate_final_data(
             for key in LEGACY_KEYS:
                 result.pop(key, None)
 
-            detected_lang, conf = choose_language(result["normalized_text"], lid_model, pri_lang=lang)
+            predictions = predict_languages(result["normalized_text"], lid_model, k=3)
+            detected_lang, conf = choose_language_from_predictions(predictions, pri_lang=lang)
             if detected_lang not in ("ca", "es", "eu", "gl"):
+                logger.warning(
+                    "Dropping segment {} {:.2f}-{:.2f}: unsupported language={} (expected={}, candidates=[{}]) | text={!r}",
+                    block_id,
+                    result["start"],
+                    result["end"],
+                    detected_lang,
+                    lang,
+                    _format_language_predictions(predictions),
+                    result["normalized_text"],
+                )
                 continue
             result["language"] = detected_lang
             result["language_confidence"] = round(conf, 2)
+            if detected_lang != lang:
+                logger.warning(
+                    "Language-ID mismatch for {} {:.2f}-{:.2f}: detected={} conf={:.2f} expected={} candidates=[{}] | text={!r}",
+                    block_id,
+                    result["start"],
+                    result["end"],
+                    detected_lang,
+                    conf,
+                    lang,
+                    _format_language_predictions(predictions),
+                    result["normalized_text"],
+                )
             if detected_lang in ("ca", "es") and "pred_text" in result:
                 result["pred_text_segmenter"] = result.pop("pred_text")
                 result.pop("cer_score", None)

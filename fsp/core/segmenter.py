@@ -88,8 +88,16 @@ class Segmenter:
             end = start + dur
             normalized_text = row["text"].replace("<space>", " ")
 
-            wav_path = self._segment_cue(start, end, base_name, dur)
+            wav_path, failure_reason = self._segment_cue(start, end, base_name, dur)
             if wav_path is None:  # ffmpeg produced an empty file; skip it
+                logger.warning(
+                    "Skipping segment %s %.2f-%.2f: %s | text=%r",
+                    base_name,
+                    start,
+                    end,
+                    failure_reason or "unknown clip generation failure",
+                    normalized_text,
+                )
                 continue
 
             lang_label = self._identify_language(normalized_text)
@@ -118,7 +126,13 @@ class Segmenter:
 
         return results
 
-    def _segment_cue(self, start: float, end: float, base_name: str, duration: float) -> str | None:
+    def _segment_cue(
+        self,
+        start: float,
+        end: float,
+        base_name: str,
+        duration: float,
+    ) -> tuple[str | None, str | None]:
         """
         Cut a segment from the audio file using ffmpeg.
 
@@ -129,7 +143,8 @@ class Segmenter:
             duration: Duration in seconds
 
         Returns:
-            Path to the output wav file, or None if failed
+            Tuple of ``(path, reason)``. When clipping fails, path is None and
+            reason contains the specific failure cause.
         """
         file_name = f"{base_name}_{start}_{end}.wav"
         out_file = os.path.join(self.out_path, file_name)
@@ -155,17 +170,19 @@ class Segmenter:
                 "16000",
                 out_file,
             ]
-            subprocess.call(cmd)
+            return_code = subprocess.call(cmd)
+            if return_code != 0:
+                return None, f"ffmpeg exited with code {return_code}"
 
         # Validate the produced file
         if not os.path.isfile(out_file):
             logger.error(f"ffmpeg failed for {out_file}")
-            return None
+            return None, "ffmpeg did not create the output file"
         info = sf.info(out_file)
         if info.frames == 0:
             os.remove(out_file)  # clean up
-            return None
-        return out_file
+            return None, "ffmpeg created a zero-frame clip"
+        return out_file, None
 
 
 __all__ = ["Segmenter"]

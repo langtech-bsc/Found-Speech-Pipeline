@@ -4,37 +4,54 @@ Language detection and dictionary utilities.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Tuple
+from typing import TYPE_CHECKING, List, Tuple
 
 if TYPE_CHECKING:
     import fasttext
 
 
-def choose_language(
+def predict_languages(
     text: str,
     lid: "fasttext.FastText._FastText",
+    k: int = 3,
+) -> List[Tuple[str, float]]:
+    """
+    Return the top-k FastText language predictions as ``(lang, confidence)`` pairs.
+    """
+    labels, confs = lid.predict(text, k=k)
+    return [(label.replace("__label__", ""), float(conf)) for label, conf in zip(labels, confs)]
+
+
+def choose_language_from_predictions(
+    predictions: List[Tuple[str, float]],
     conf_delta: float = 0.2,
+    gl_es_low_conf: float = 0.6,
+    gl_pt_min_conf: float = 0.25,
     pri_lang: str | None = None,
 ) -> Tuple[str, float]:
     """
-    FastText-based language choice tuned for ca/es/eu/gl.
+    Choose a language from precomputed FastText predictions.
 
     Args:
-        text: Input text to classify
-        lid: FastText language identification model
+        predictions: Top FastText predictions as ``(lang, confidence)`` pairs
         conf_delta: Confidence delta threshold for close language pairs
+        gl_es_low_conf: Threshold to flip low-confidence es/gl cases toward Galician
+        gl_pt_min_conf: Minimum gl confidence to flip pt/gl cases toward Galician
         pri_lang: Expected pipeline language, used as a tie-breaker
 
     Returns:
         Tuple of (language_code, confidence_score)
     """
     supported = {"ca", "es", "eu", "gl"}
-    labels, confs = lid.predict(text, k=3)
-    langs = [label.replace("__label__", "") for label in labels]
-    confs = [float(conf) for conf in confs]
+    if not predictions:
+        return "unknown", 0.0
+
+    langs = [lang for lang, _ in predictions]
+    confs = [conf for _, conf in predictions]
 
     l1, c1 = langs[0], confs[0]
-    l2, c2 = langs[1], confs[1]
+    l2 = langs[1] if len(langs) > 1 else ""
+    c2 = confs[1] if len(confs) > 1 else 0.0
 
     if pri_lang in supported and l1 not in supported and c1 < 0.5 and pri_lang in langs:
         idx = langs.index(pri_lang)
@@ -49,16 +66,59 @@ def choose_language(
         return "gl", c1
     if l1 == "pt" and l2 == "gl" and (c1 - c2) < conf_delta:
         return "gl", c2
+    if pri_lang == "gl" and l1 == "pt" and l2 == "gl" and c2 >= gl_pt_min_conf:
+        return "gl", c2
+    if l1 == "es" and l2 == "gl" and (c1 - c2) < conf_delta:
+        return "gl", c2
+    if pri_lang == "gl" and l1 == "es" and l2 == "gl" and c1 < gl_es_low_conf:
+        return "gl", c2
 
     if l1 == "ca":
         return "ca", c1
     if l1 == "es" and l2 == "ca" and (c1 - c2) < conf_delta:
         return "ca", c2
 
+    return l1, c1
+
+
+def choose_language(
+    text: str,
+    lid: "fasttext.FastText._FastText",
+    conf_delta: float = 0.2,
+    gl_es_low_conf: float = 0.6,
+    gl_pt_min_conf: float = 0.25,
+    pri_lang: str | None = None,
+) -> Tuple[str, float]:
+    """
+    FastText-based language choice tuned for ca/es/eu/gl.
+
+    Args:
+        text: Input text to classify
+        lid: FastText language identification model
+        conf_delta: Confidence delta threshold for close language pairs
+        gl_es_low_conf: Threshold to flip low-confidence es/gl cases toward Galician
+        gl_pt_min_conf: Minimum gl confidence to flip pt/gl cases toward Galician
+        pri_lang: Expected pipeline language, used as a tie-breaker
+
+    Returns:
+        Tuple of (language_code, confidence_score)
+    """
+    predictions = predict_languages(text, lid, k=3)
+
     catalan_tokens = (" l'", " d'", "ç", " ny", "això", "qüestió")
     if any(tok in text.lower() for tok in catalan_tokens):
-        return "ca", c2 if l2 == "ca" else 0.01
-    return l1, c1
+        for lang, conf in predictions[1:]:
+            if lang == "ca":
+                return "ca", conf
+        return "ca", 0.01
+
+    return choose_language_from_predictions(
+        predictions,
+        conf_delta=conf_delta,
+        gl_es_low_conf=gl_es_low_conf,
+        gl_pt_min_conf=gl_pt_min_conf,
+        pri_lang=pri_lang,
+    )
 
 
 def get_language_dicts(lang: str):
@@ -93,4 +153,9 @@ def get_language_dicts(lang: str):
     }
 
 
-__all__ = ["choose_language", "get_language_dicts"]
+__all__ = [
+    "choose_language",
+    "choose_language_from_predictions",
+    "get_language_dicts",
+    "predict_languages",
+]

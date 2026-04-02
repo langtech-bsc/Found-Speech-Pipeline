@@ -157,6 +157,15 @@ def filter_and_cleanup(json_path: str, min_dur: float = 2, max_dur: float = 30) 
 
             # Remove segments that do NOT satisfy min < duration <= max
             if not (duration > min_dur and duration <= max_dur):
+                logger.warning(
+                    "Dropping segment during duration filter: {:.2f}-{:.2f} dur={:.2f}s outside ({:.2f}, {:.2f}] | path={}",
+                    start,
+                    end,
+                    duration,
+                    min_dur,
+                    max_dur,
+                    seg_path or "<missing>",
+                )
                 if seg_path and os.path.isfile(seg_path):
                     try:
                         os.remove(seg_path)
