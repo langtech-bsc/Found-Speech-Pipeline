@@ -20,9 +20,8 @@
 #   ./create_splits_run_pipeline.sh -n 10 -o input_ids -l ca -i custom/path
 #
 # DEPENDENCIES:
-#   - Singularity (module load singularity)
+#   - Singularity image
 #   - Python script: scripts/split.py
-#   - Singularity image: /gpfs/projects/bsc88/singularity-images/fsp-pipeline.sif
 #
 # NOTES:
 #   - Output directory will be created if it doesn't exist
@@ -50,6 +49,8 @@ echo "output_dir: $output_dir"
 echo "lang: $lang"
 echo "input_dir: $input_dir"
 
+source ./.env
+
 module load singularity
 
 if [ ! -d "${input_dir}" ]; then
@@ -64,13 +65,13 @@ else
     echo "Using existing output directory '${output_dir}'"
 fi
 
-singularity exec --no-home /gpfs/projects/bsc88/singularity-images/fsp-pipeline.sif python scripts/split.py "${input_dir}" -n "${num_buckets}" -o "${output_dir}"
+singularity exec --no-home "${SIF}" python scripts/split.py "${input_dir}" -n "${num_buckets}" -o "${output_dir}"
 
 echo ""
 
 for file in "${output_dir}"/*; do
     if [ -f "$file" ]; then
         echo "Running pipeline with input id file: $file";
-        sbatch run_singularity.sh --input-id-file "${file}" --lang "${lang}"
+        sbatch ./run_singularity.sh --input-id-file "${file}" --lang "${lang}" --device auto
     fi
 done
