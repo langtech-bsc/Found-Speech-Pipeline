@@ -24,6 +24,7 @@ from fsp.utils.models import (
     configure_model_environment,
     find_local_nemo_checkpoint,
     load_model,
+    log_loaded_model_device,
     unload_model,
 )
 from fsp.utils.paths import ALIGN_DIR, MANIFEST_DIR, NORM_DIR, OUTPUT_SEGMENT_DIR, ROOT
@@ -186,6 +187,7 @@ def run_forced_alignment(
     input_id: str,
     model_name: str,
     local_nemo_path: Path | None = None,
+    align_device: str = "cpu",
 ) -> Path:
     """
     Run NeMo forced aligner.
@@ -195,6 +197,7 @@ def run_forced_alignment(
         input_id: Input identifier
         model_name: Name of the NeMo model
         local_nemo_path: Path to local .nemo file (optional)
+        align_device: Device for NeMo alignment transcription and Viterbi
 
     Returns:
         Path to alignment output directory
@@ -207,6 +210,12 @@ def run_forced_alignment(
     else:
         aligner_model_arg = f"pretrained_name={model_name}"
 
+    logger.info(
+        "Running NeMo forced alignment for '{}' with transcribe_device={} viterbi_device={}",
+        input_id,
+        align_device,
+        align_device,
+    )
     subprocess.run(
         [
             sys.executable,
@@ -215,8 +224,8 @@ def run_forced_alignment(
             f"manifest_filepath={manifest_fp}",
             f"output_dir={input_align_dir}",
             "align_using_pred_text=false",
-            "transcribe_device=cpu",
-            "viterbi_device=cpu",
+            f"transcribe_device={align_device}",
+            f"viterbi_device={align_device}",
             "additional_segment_grouping_separator=|",
             "hydra.run.dir=.",
         ],
@@ -288,11 +297,17 @@ def generate_final_data(
     )
 
     if local_nemo is not None and local_nemo.is_file():
-        logger.info(f"Loading local NeMo model: {local_nemo}")
+        logger.info(
+            "Loading primary NeMo CTC model '{}' from {} on requested device {}",
+            primary_model_name,
+            local_nemo,
+            resolved_device,
+        )
         primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(
             str(local_nemo),
             map_location=resolved_device,
-        )
+        ).to(resolved_device).eval()
+        log_loaded_model_device(primary_model_name, primary_asr, requested_device=resolved_device)
     else:
         raise FileNotFoundError(
             f"Primary NeMo model not found locally under {model_paths.nemo_model_dir}: {primary_model_name}"
@@ -309,7 +324,13 @@ def generate_final_data(
 
     # 1. Forced alignment
     manifest_fp = build_manifest(meta_path, lid_model)
-    input_align_dir = run_forced_alignment(manifest_fp, input_id, primary_model_name, local_nemo)
+    input_align_dir = run_forced_alignment(
+        manifest_fp,
+        input_id,
+        primary_model_name,
+        local_nemo_path=local_nemo,
+        align_device=resolved_device,
+    )
 
     # 2. Segment & language-tag
     out_seg_dir = OUTPUT_SEGMENT_DIR / input_id
@@ -360,7 +381,6 @@ def generate_final_data(
                     nemo_model_dir=model_paths.nemo_model_dir,
                     hf_model_dir=model_paths.hf_model_dir,
                 )
-                logger.info(f"Model {model_dir_name} loaded on device {resolved_device}")
                 for r in segs:
                     key = f"pred_text_{model_dir_name}"
                     norm_key = f"norm_text_{model_dir_name}"
