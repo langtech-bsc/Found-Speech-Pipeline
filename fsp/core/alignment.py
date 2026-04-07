@@ -270,24 +270,6 @@ def generate_final_data(
     logger.info(f"Loading language-ID model: {resolved_lid_model}")
     lid_model = fasttext.load_model(str(resolved_lid_model))
 
-    # Load CTC model
-    primary_model_name = CTC_MODELS[lang]
-    local_nemo = find_local_nemo_checkpoint(
-        primary_model_name,
-        nemo_model_dir=model_paths.nemo_model_dir,
-    )
-
-    if local_nemo is not None and local_nemo.is_file():
-        logger.info(f"Loading local NeMo model: {local_nemo}")
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(local_nemo))
-    else:
-        raise FileNotFoundError(
-            f"Primary NeMo model not found locally under {model_paths.nemo_model_dir}: {primary_model_name}"
-        )
-
-    ca_asr = primary_asr if lang == "ca" else None
-    es_asr = primary_asr if lang == "es" else None
-
     resolved_device = (
         "cpu"
         if device == "cpu"
@@ -297,6 +279,27 @@ def generate_final_data(
             else "cpu"
         )
     )
+
+    # Load CTC model
+    primary_model_name = CTC_MODELS[lang]
+    local_nemo = find_local_nemo_checkpoint(
+        primary_model_name,
+        nemo_model_dir=model_paths.nemo_model_dir,
+    )
+
+    if local_nemo is not None and local_nemo.is_file():
+        logger.info(f"Loading local NeMo model: {local_nemo}")
+        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(
+            str(local_nemo),
+            map_location=resolved_device,
+        )
+    else:
+        raise FileNotFoundError(
+            f"Primary NeMo model not found locally under {model_paths.nemo_model_dir}: {primary_model_name}"
+        )
+
+    ca_asr = primary_asr if lang == "ca" else None
+    es_asr = primary_asr if lang == "es" else None
 
     # Paths
     norm_root = NORM_DIR / input_id

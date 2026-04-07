@@ -13,8 +13,9 @@ CLI wrapper for fsp.core.alignment.generate_final_data
 from __future__ import annotations
 
 import argparse
-import logging
 from pathlib import Path
+
+from loguru import logger
 
 from fsp.utils.paths import (
     HF_MODEL_DIR_ENV_VAR,
@@ -23,13 +24,9 @@ from fsp.utils.paths import (
     NEMO_MODEL_DIR_ENV_VAR,
 )
 
-# Setup logging
+# Setup loguru to also write to file
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-logging.basicConfig(
-    filename=LOG_DIR / "output.log",
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)s  %(message)s",
-)
+logger.add(LOG_DIR / "output.log", level="INFO")
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,7 +88,7 @@ def main() -> None:
             hf_model_dir=args.hf_model_dir,
         )
     except Exception as e:
-        logging.error("Fatal error: %s", e)
+        logger.error("Fatal error: {}", e)
         raise Exception(e)
 
 
