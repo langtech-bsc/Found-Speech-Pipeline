@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
 import pandas as pd
 import soundfile as sf
@@ -33,6 +33,7 @@ class Segmenter:
         lg_model: "fasttext.FastText._FastText",
         ca_model: Any = None,
         es_model: Any = None,
+        drop_callback: Callable[[Dict[str, Any]], None] | None = None,
     ):
         """
         Initialize the Segmenter.
@@ -58,7 +59,33 @@ class Segmenter:
         self.lg_model = lg_model
         self.ca_model = ca_model
         self.es_model = es_model
+        self.drop_callback = drop_callback
         os.makedirs(out_path, exist_ok=True)
+
+    def _record_drop(
+        self,
+        *,
+        base_name: str,
+        start: float,
+        end: float,
+        normalized_text: str,
+        reason: str,
+        details: Dict[str, Any] | None = None,
+    ) -> None:
+        """Record a dropped segment if a callback is configured."""
+        if self.drop_callback is None:
+            return
+        payload: Dict[str, Any] = {
+            "stage": "segmentation",
+            "block_id": base_name,
+            "start": round(start, 2),
+            "end": round(end, 2),
+            "text": normalized_text,
+            "reason": reason,
+        }
+        if details:
+            payload.update(details)
+        self.drop_callback(payload)
 
     def _asr(self, model: Any, wav: str) -> str:
         """Plain CTC decode."""
@@ -82,14 +109,32 @@ class Segmenter:
 
         for _, row in self.alignment.iterrows():
             start, dur = row["start"], row["duration"]
-            if dur < self.MIN_DUR:
-                continue  # skip ultra-short segments
-
             end = start + dur
             normalized_text = row["text"].replace("<space>", " ")
+            if dur < self.MIN_DUR:
+                self._record_drop(
+                    base_name=base_name,
+                    start=start,
+                    end=end,
+                    normalized_text=normalized_text,
+                    reason="duration_below_minimum",
+                    details={
+                        "duration": round(dur, 2),
+                        "minimum_duration": self.MIN_DUR,
+                    },
+                )
+                continue  # skip ultra-short segments
 
             wav_path, failure_reason = self._segment_cue(start, end, base_name, dur)
             if wav_path is None:  # ffmpeg produced an empty file; skip it
+                self._record_drop(
+                    base_name=base_name,
+                    start=start,
+                    end=end,
+                    normalized_text=normalized_text,
+                    reason="segment_clip_generation_failed",
+                    details={"failure_reason": failure_reason or "unknown clip generation failure"},
+                )
                 logger.warning(
                     "Skipping segment %s %.2f-%.2f: %s | text=%r",
                     base_name,

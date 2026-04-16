@@ -12,6 +12,7 @@ import logging
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
@@ -26,7 +27,7 @@ from fsp.utils.models import (
     load_model,
     unload_model,
 )
-from fsp.utils.paths import ALIGN_DIR, MANIFEST_DIR, NORM_DIR, OUTPUT_SEGMENT_DIR, ROOT
+from fsp.utils.paths import ALIGN_DIR, LOG_DIR, MANIFEST_DIR, NORM_DIR, OUTPUT_SEGMENT_DIR, ROOT
 
 if TYPE_CHECKING:
     import fasttext
@@ -69,11 +70,22 @@ CTC_MODELS = {
 }
 
 LEGACY_KEYS = {"pred_text", "cer_score"}
+MIN_SEGMENT_LANGUAGE_CONFIDENCE = 0.35
 
 
 def _format_language_predictions(predictions: List[Tuple[str, float]]) -> str:
     """Render FastText predictions for debug logging."""
     return ", ".join(f"{lang}={conf:.2f}" for lang, conf in predictions)
+
+
+def _write_drop_log(drop_log_path: Path, dropped_segments: List[Dict[str, Any]]) -> None:
+    """Persist dropped-segment records for the current run."""
+    drop_log_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "dropped_segments": dropped_segments,
+    }
+    drop_log_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
 def _clean_alignment_text(text: str, lang: str) -> str:
@@ -224,6 +236,7 @@ def generate_final_data(
     lid_model_path: str | Path | None = None,
     nemo_model_dir: str | Path | None = None,
     hf_model_dir: str | Path | None = None,
+    min_language_confidence: float = MIN_SEGMENT_LANGUAGE_CONFIDENCE,
 ) -> Path:
     """Generate word-level aligned JSON with ASR enrichment."""
     model_paths = configure_model_environment(
@@ -239,6 +252,9 @@ def generate_final_data(
 
     start = time.perf_counter()
     output_name = output_name or f"final_output_{input_id}.json"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    drop_log_path = LOG_DIR / "dropped_segments" / f"{input_id}_{lang}_{timestamp}.json"
+    dropped_segments: List[Dict[str, Any]] = []
 
     resolved_lid_model = model_paths.lid_model_path
     if not resolved_lid_model.is_file():
@@ -296,9 +312,26 @@ def generate_final_data(
         block_id = ctm_file.stem
         wav_src = norm_root / f"{block_id}.wav"
         if not wav_src.is_file():
+            dropped_segments.append(
+                {
+                    "stage": "alignment",
+                    "block_id": block_id,
+                    "reason": "missing_source_audio",
+                    "expected_language": lang,
+                    "source_audio_path": str(wav_src),
+                }
+            )
             continue
 
-        seg = Segmenter(str(ctm_file), str(wav_src), str(out_seg_dir), lid_model, ca_asr, es_asr)
+        seg = Segmenter(
+            str(ctm_file),
+            str(wav_src),
+            str(out_seg_dir),
+            lid_model,
+            ca_asr,
+            es_asr,
+            drop_callback=dropped_segments.append,
+        )
         results = seg.segment_audio()
         kept_results: List[Dict[str, Any]] = []
 
@@ -308,32 +341,91 @@ def generate_final_data(
 
             predictions = predict_languages(result["normalized_text"], lid_model, k=3)
             detected_lang, conf = choose_language_from_predictions(predictions, pri_lang=lang)
+            prediction_summary = _format_language_predictions(predictions)
             if detected_lang not in ("ca", "es", "eu", "gl"):
+                dropped_segments.append(
+                    {
+                        "stage": "alignment",
+                        "block_id": block_id,
+                        "start": round(result["start"], 2),
+                        "end": round(result["end"], 2),
+                        "text": result["normalized_text"],
+                        "reason": "unsupported_language",
+                        "expected_language": lang,
+                        "detected_language": detected_lang,
+                        "confidence": round(conf, 4),
+                        "fasttext_predictions": predictions,
+                    }
+                )
                 logger.warning(
-                    "Dropping segment {} {:.2f}-{:.2f}: unsupported language={} (expected={}, candidates=[{}]) | text={!r}",
+                    "Dropping segment {} {:.2f}-{:.2f}: unsupported language={} expected={} fasttext=[{}] | text={!r}",
                     block_id,
                     result["start"],
                     result["end"],
                     detected_lang,
                     lang,
-                    _format_language_predictions(predictions),
+                    prediction_summary,
                     result["normalized_text"],
                 )
                 continue
-            result["language"] = detected_lang
-            result["language_confidence"] = round(conf, 2)
             if detected_lang != lang:
+                dropped_segments.append(
+                    {
+                        "stage": "alignment",
+                        "block_id": block_id,
+                        "start": round(result["start"], 2),
+                        "end": round(result["end"], 2),
+                        "text": result["normalized_text"],
+                        "reason": "language_mismatch",
+                        "expected_language": lang,
+                        "detected_language": detected_lang,
+                        "confidence": round(conf, 4),
+                        "fasttext_predictions": predictions,
+                    }
+                )
                 logger.warning(
-                    "Language-ID mismatch for {} {:.2f}-{:.2f}: detected={} conf={:.2f} expected={} candidates=[{}] | text={!r}",
+                    "Dropping segment {} {:.2f}-{:.2f}: language mismatch detected={} conf={:.2f} expected={} fasttext=[{}] | text={!r}",
                     block_id,
                     result["start"],
                     result["end"],
                     detected_lang,
                     conf,
                     lang,
-                    _format_language_predictions(predictions),
+                    prediction_summary,
                     result["normalized_text"],
                 )
+                continue
+            if conf < min_language_confidence:
+                dropped_segments.append(
+                    {
+                        "stage": "alignment",
+                        "block_id": block_id,
+                        "start": round(result["start"], 2),
+                        "end": round(result["end"], 2),
+                        "text": result["normalized_text"],
+                        "reason": "language_confidence_below_threshold",
+                        "expected_language": lang,
+                        "detected_language": detected_lang,
+                        "confidence": round(conf, 4),
+                        "minimum_confidence": min_language_confidence,
+                        "fasttext_predictions": predictions,
+                    }
+                )
+                logger.warning(
+                    "Dropping segment {} {:.2f}-{:.2f}: low language confidence detected={} conf={:.2f} threshold={:.2f} expected={} fasttext=[{}] | text={!r}",
+                    block_id,
+                    result["start"],
+                    result["end"],
+                    detected_lang,
+                    conf,
+                    min_language_confidence,
+                    lang,
+                    prediction_summary,
+                    result["normalized_text"],
+                )
+                continue
+            result["language"] = detected_lang
+            result["language_confidence"] = round(conf, 2)
             if detected_lang in ("ca", "es") and "pred_text" in result:
                 result["pred_text_segmenter"] = result.pop("pred_text")
                 result.pop("cer_score", None)
@@ -395,6 +487,8 @@ def generate_final_data(
 
     final_fp = OUTPUT_SEGMENT_DIR / output_name
     final_fp.write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
+    _write_drop_log(drop_log_path, dropped_segments)
+    logger.info("Dropped-segment log written to {}", drop_log_path)
     logger.info(f"JSON written to {final_fp} ({time.perf_counter() - start:.1f}s)")
 
     return final_fp
