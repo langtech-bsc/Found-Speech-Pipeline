@@ -61,6 +61,7 @@ echo "Args: ${*:-<batch mode>}"
 echo "==========================================================="
 
 ${RUNNER} exec \
+    --nv \
     --bind "${SCRIPT_DIR}/ingestion:/app/ingestion" \
     --bind "${SCRIPT_DIR}/inputs:/app/inputs" \
     --bind "${SCRIPT_DIR}/merged:/app/merged" \
