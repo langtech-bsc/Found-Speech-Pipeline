@@ -72,6 +72,6 @@ echo ""
 for file in "${output_dir}"/*; do
     if [ -f "$file" ]; then
         echo "Running pipeline with input id file: $file";
-        sbatch ./run_singularity.sh --input-id-file "${file}" --lang "${lang}" --device auto
+        sbatch ./run_singularity.sh --input-id-file "${file}" --lang "${lang}"
     fi
 done
