@@ -190,6 +190,8 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
 
     any_seg = flat_results[0]
     norm_fields = config.fields or sorted(collect_norm_fields(any_seg))
+    if not norm_fields:
+        raise ValueError(f"[{path.name}] No norm_* fields found for ROVER merge")
     logger.info(f"[{path.name}] Merging over {norm_fields}")
 
     rows: List[Dict] = []
@@ -203,6 +205,13 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
                 continue
 
             ref = seg["normalized_text"]
+            missing_fields = [f for f in norm_fields if not seg.get(f)]
+            if missing_fields:
+                segment_path = seg.get("segment_path", "<unknown>")
+                raise ValueError(
+                    f"[{path.name}] Missing ROVER fields {missing_fields} "
+                    f"for segment {segment_path}"
+                )
             hyps_raw = [seg[f] for f in norm_fields]
 
             ref_norm = normalise(ref) if config.norm else ref
