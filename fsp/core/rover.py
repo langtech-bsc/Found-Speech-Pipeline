@@ -91,6 +91,9 @@ def centroid(hyps: Sequence[str]) -> str:
     Returns:
         The centroid hypothesis
     """
+    if len(hyps) == 1:
+        return hyps[0]
+
     counts = Counter(hyps)
     if counts.most_common(1)[0][1] >= 2:  # at least 2 identical
         return counts.most_common(1)[0][0]
@@ -197,7 +200,10 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
     rows: List[Dict] = []
     tot_chars = err_ro_c = err_ro_w = 0.0
     err_baseline: Dict[str, float] = defaultdict(float)
+    baseline_chars: Dict[str, float] = defaultdict(float)
     keep_langs = set(config.langs)
+    segments_seen = segments_with_missing = segments_zero_hyp = 0
+    empty_by_model: Dict[str, int] = defaultdict(int)
 
     for block in data.values():
         for seg in block["results"]:
@@ -207,12 +213,21 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
             ref = seg["normalized_text"]
             missing_fields = [f for f in norm_fields if not seg.get(f)]
             if missing_fields:
-                segment_path = seg.get("segment_path", "<unknown>")
-                raise ValueError(
-                    f"[{path.name}] Missing ROVER fields {missing_fields} "
-                    f"for segment {segment_path}"
+                segments_with_missing += 1
+                for field in missing_fields:
+                    empty_by_model[field] += 1
+
+            available_fields = [f for f in norm_fields if seg.get(f)]
+            if not available_fields:
+                segments_zero_hyp += 1
+                logger.warning(
+                    f"[{path.name}] Skipping segment with zero ROVER hypotheses: "
+                    f"{seg.get('segment_path', '<unknown>')}"
                 )
-            hyps_raw = [seg[f] for f in norm_fields]
+                continue
+
+            segments_seen += 1
+            hyps_raw = [seg[f] for f in available_fields]
 
             ref_norm = normalise(ref) if config.norm else ref
             hyps = [clean_pred(h) for h in hyps_raw]
@@ -226,8 +241,9 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
             seg["rover_text"] = vote_out
             tot_chars += len(ref_norm)
 
-            for f, h in zip(norm_fields, hyps_norm):
+            for f, h in zip(available_fields, hyps_norm):
                 err_baseline[f] += cer(ref_norm, h) * len(ref_norm)
+                baseline_chars[f] += len(ref_norm)
             err_ro_c += cer(ref_norm, vote_out) * len(ref_norm)
             err_ro_w += wer(ref_norm, vote_out) * len(ref_norm)
 
@@ -236,7 +252,7 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
                     {
                         "segment_path": seg["segment_path"],
                         "normalized_text": ref,
-                        **dict(zip(norm_fields, hyps)),
+                        **dict(zip(available_fields, hyps)),
                         "rover_text": vote_out,
                     }
                 )
@@ -250,10 +266,13 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
         pd.DataFrame(rows).to_csv(out_json.with_suffix(".csv"), index=False)
 
     if config.plot and plt and tot_chars:
-        bars = [err_baseline[f] / tot_chars for f in norm_fields] + [err_ro_c / tot_chars]
+        plotted_fields = [f for f in norm_fields if baseline_chars[f]]
+        bars = [err_baseline[f] / baseline_chars[f] for f in plotted_fields] + [
+            err_ro_c / tot_chars
+        ]
         plt.figure(figsize=(max(6, 1.2 * len(bars)), 4))
         plt.bar(range(len(bars)), bars)
-        clean = [re.sub(r"^norm_text_", "", f) for f in norm_fields] + ["ROVER"]
+        clean = [re.sub(r"^norm_text_", "", f) for f in plotted_fields] + ["ROVER"]
         plt.xticks(range(len(bars)), clean, rotation=45, ha="right")
         plt.ylabel("Corpus CER")
         plt.title(f"{path.name}  ({','.join(sorted(keep_langs))})")
@@ -262,6 +281,15 @@ def process_file(path: Path, config: RoverConfig) -> Tuple[float, float, int]:
         plt.close()
 
     if tot_chars:
+        logger.info(
+            f"[{path.name}] ROVER hypothesis coverage: "
+            f"segments processed={segments_seen}, "
+            f"segments with missing hypotheses={segments_with_missing}, "
+            f"segments with zero hypotheses={segments_zero_hyp}"
+        )
+        for field in norm_fields:
+            if empty_by_model[field]:
+                logger.info(f"  empty {field}: {empty_by_model[field]}")
         logger.info(
             f"  CER_rover = {err_ro_c / tot_chars:.2%} | "
             f"WER_rover = {err_ro_w / tot_chars:.2%}\n"
