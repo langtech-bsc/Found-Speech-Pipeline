@@ -349,6 +349,7 @@ def generate_final_data(
         seg = Segmenter(str(ctm_file), str(wav_src), str(out_seg_dir), lid_model, ca_asr, es_asr)
         results = seg.segment_audio()
 
+        kept_results = []
         for r in results:
             for k in LEGACY_KEYS:
                 r.pop(k, None)
@@ -356,13 +357,16 @@ def generate_final_data(
             detected_lang, conf = choose_language(r["normalized_text"], lid_model)
             if detected_lang not in ("ca", "es"):
                 continue
+            if detected_lang != lang:
+                continue
             r["language"] = detected_lang
             r["language_confidence"] = round(conf, 2)
             buckets[detected_lang].append(r)
+            kept_results.append(r)
 
         combined[block_id] = {
             "input_id": input_id,
-            "results": results,
+            "results": kept_results,
         }
 
     # 3. ASR per-language, one model at a time
