@@ -2,9 +2,9 @@
 
 ## Introduction
 
-The **Found‑Speech Pipeline** processes **audio‑transcript pairs** (WAV + TSV) into clean, word‑level aligned JSON files with CER/WER analytics via ROVER merging of multiple ASR hypotheses. Everything runs locally — no external services required.
+The **Found‑Speech Pipeline** processes **audio‑transcript pairs** (WAV + TSV) into clean, word‑level aligned JSON files with CER/WER analytics via ROVER merging of multiple ASR hypotheses.
 
-Supported languages: **Catalan** (`ca`) and **Spanish** (`es`).
+Supported languages: **Catalan** (`ca`), **Spanish** (`es`), **Basque** (`eu`), and **Galician** (`gl`).
 
 ---
 
@@ -35,14 +35,13 @@ ingestion/
 Each `.tsv` must contain **exactly one line** in this format:
 
 ```
-/app/ingestion/my_recording.wav<TAB>Full transcript text here.
+/path/to/my_recording.wav<TAB>Full transcript text here.
 ```
 
 > [!IMPORTANT]
 > - The WAV filename and TSV filename must share the same stem (e.g. `my_recording`).
-> - **Docker/Singularity:** use the container path `/app/ingestion/<filename>.wav`.
-> - **Native:** use the absolute host path (e.g. `/home/user/Found-Speech-Pipeline/ingestion/my_recording.wav`).
 > - The TSV must contain a single row with two tab‑separated columns: WAV path and transcript text.
+> - The first TSV column is kept as metadata, but the pipeline loads audio by input ID from `ingestion/<input-id>.wav`.
 
 ---
 
@@ -61,17 +60,21 @@ This keeps the image lean and lets you run fully offline after downloading.
 
 ```bash
 # Create model directories
-mkdir -p utils/models/nemo utils/models/huggingface
+mkdir -p utils/models/fasttext utils/models
 
 # Download the FastText language-ID model (~126 MB)
 wget -q "https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN/download" \
-  -O utils/models/lid.176.bin
+  -O utils/models/fasttext/lid.176.bin
 
-# Download all ASR models — Catalan + Spanish (~15 GB)
+# Download ASR models for Catalan + Spanish (~15 GB)
 docker run --rm --user $(id -u):$(id -g) \
   -v $(pwd)/utils/models:/app/utils/models \
   fsp-pipeline python scripts/download_models.py --lang all
 ```
+
+This download step only prepares the Catalan/Spanish ASR models handled by
+`scripts/download_models.py`. Basque, Galician, punctuation, and the optional
+Galician sidecar require extra assets not covered by this command.
 
 To download only one language instead:
 
@@ -110,8 +113,8 @@ docker run --rm --user $(id -u):$(id -g) \
 ```
 
 If your models live outside the repository, pass the explicit runtime paths:
-`--lid-model-path /path/to/lid.176.bin`, `--nemo-model-dir /path/to/nemo`, and
-`--hf-model-dir /path/to/huggingface`. For `run_singularity.sh`, set
+`--lid-model-path /path/to/fasttext/lid.176.bin`, `--nemo-model-dir /path/to/model-root`, and
+`--hf-model-dir /path/to/model-root`. For `run_singularity.sh`, set
 `LID_MODEL_PATH`, `NEMO_MODEL_DIR`, and `HF_MODEL_DIR` before invoking the wrapper.
 
 ### Step 4. Run fully offline (optional)
@@ -160,8 +163,8 @@ This creates `fsp-pipeline.sif` (~3–4 GB) from the Docker image. Takes ~5–10
 ```
 
 The `run_singularity.sh` wrapper automatically binds `ingestion/`, `inputs/`, `merged/`,
-`${LID_MODEL_PATH:-utils/models/lid.176.bin}`, `${NEMO_MODEL_DIR:-utils/models/nemo}`,
-and `${HF_MODEL_DIR:-utils/models/huggingface}` into the container.
+`${LID_MODEL_PATH:-$MODELS_ROOT/fasttext/lid.176.bin}`, `${NEMO_MODEL_DIR:-$MODELS_ROOT}`,
+and `${HF_MODEL_DIR:-$MODELS_ROOT}` into the container.
 
 ---
 
@@ -171,11 +174,11 @@ If you prefer to run without containers:
 
 ```bash
 # 1 — Create model directories
-mkdir -p utils/models/nemo utils/models/huggingface
+mkdir -p utils/models/fasttext utils/models
 
 # 2 — Download the FastText language-ID model (~126 MB)
 wget -q "https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN/download" \
-  -O utils/models/lid.176.bin
+  -O utils/models/fasttext/lid.176.bin
 
 # 3 — Create Python 3.11 virtual environment
 python3.11 -m venv venv
@@ -217,50 +220,66 @@ The orchestrator (`pipeline_service.py`) runs these steps in order:
 |---|---|---|---|
 | 1 | **Normalize TSV** | `scripts/normalize_tsv.py` | `inputs/normalized/<id>/<id>_norm_mark.tsv` |
 | 2 | **Normalize audio** | `scripts/normalize_audio.py` | `inputs/normalized/<id>/<id>.wav` (16 kHz mono) |
-| 3 | **Generate final data** | `steps/generate_final_data.py` | Forced alignment → segmentation → per‑language ASR |
-| 4 | **Duration filter** | `scripts/duration_filter.py` | Removes segments < 2 s or > 30 s |
-| 5 | **ROVER merge** | `scripts/rover_merge.py` | Merged `rover_text` + CER/WER analytics |
+| 3 | **Generate final data** | `steps/generate_final_data.py` | Forced alignment → segmentation → per‑language ASR into `inputs/output_segment/final_output_<id>.json` |
+| 4 | **Optional GL extra ASR** | `steps/enrich_segment_hypotheses.py` via sidecar image | Adds extra Galician hypotheses when `--lang gl` |
+| 5 | **Duration filter** | `scripts/duration_filter.py` | Removes segments < 2 s or > 30 s |
+| 6 | **ROVER merge** | `scripts/rover_merge.py` | Merged `rover_text` + CER/WER analytics in `merged/` |
+| 7 | **Punctuation** | `scripts/punctuate.py` | Adds `text_normalized` and `text_punctuated` to the merged JSON |
 
----
+### Normalization
 
-## ASR Models
+Text normalization is language-specific:
 
-### Spanish (`--lang es`)
+- `ca` and `es` use in-process dictionaries plus number expansion.
+- `eu` uses the external `modulo1y2` normalizer.
+- `gl` uses the external `cotovia` normalizer.
 
-| Model | Type | Source |
-|---|---|---|
-| `stt_es_conformer_ctc_large` | NeMo CTC | NVIDIA NGC |
-| `parakeet-rnnt-1.1b_cv17_es_ep18_1270h` | NeMo RNNT | HuggingFace (projecte‑aina) |
-| `stt_es_conformer_transducer_large` | NeMo RNNT | HuggingFace (nvidia) |
-| `whisper-large-v3` | Whisper | HuggingFace (openai) |
+For `eu` and `gl`, the code expects external assets under `utils/normalizers/eu`
+and `utils/normalizers/gl`. Those directories are not present in this checkout.
+If the binaries are missing, the code silently falls back to basic lowercasing and
+character stripping instead of full normalization.
 
-### Catalan (`--lang ca`)
+### Language ID
 
-| Model | Type | Source |
-|---|---|---|
-| `stt_ca_conformer_ctc_large` | NeMo CTC | NVIDIA NGC |
-| `whisper-large-v3-ca-3catparla` | Whisper | HuggingFace (projecte‑aina) |
-| `whisper-bsc-large-v3-cat` | Whisper | HuggingFace (langtech‑veu) |
-| `whisper-large-v3-ca-punctuated-3370h` | Whisper | HuggingFace (langtech‑veu) |
-| `stt_ca-es_conformer_transducer_large` | NeMo RNNT | HuggingFace (projecte‑aina) |
+Language ID is part of the filtering logic, not just metadata. Segments are
+dropped when FastText detects a different language than the pipeline language or
+when confidence is too low. The pipeline also writes a dropped-segment audit log
+under `inputs/dropped_segments/`.
 
-### Shared (both languages)
+### GL Sidecar
 
-| Model | Type | Source |
-|---|---|---|
-| `lid.176.bin` | FastText language‑ID | [B2Drop](https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN) |
+When running with `--lang gl`, the pipeline can optionally launch a small
+Galician-only sidecar step after the main ASR pass. This adds extra GL
+hypotheses to the intermediate JSON before duration filtering and ROVER. You can
+disable it with `--skip-gl-extra-asr`.
 
 ---
 
 ## Output Files
 
-After processing, results appear in `merged/`:
+After processing, the pipeline writes outputs both under `inputs/` and `merged/`.
+
+Main final outputs in `merged/`:
 
 ```
 merged/
   final_output_<input-id>.json   # Word-level aligned JSON with rover_text
   final_output_<input-id>.csv    # Per-segment CER/WER table
   final_output_<input-id>.png    # CER bar chart
+```
+
+Intermediate and audit outputs under `inputs/`:
+
+```
+inputs/
+  normalized/<id>/<id>_norm_mark.tsv      # Normalized transcript TSV
+  normalized/<id>/<id>.wav                # Canonical 16 kHz mono WAV
+  normalized/<id>/<id>_metadata.json      # Audio/text metadata for alignment
+  manifest/<id>_manifest.json             # NeMo manifest
+  wordlevel_alignment/<id>/               # CTM/ASS forced-alignment artifacts
+  output_segment/<id>/                    # Sentence/segment WAV clips
+  output_segment/final_output_<id>.json   # Intermediate enriched JSON
+  dropped_segments/<id>_<lang>_*.json     # Dropped-segment audit log
 ```
 
 ---
@@ -274,12 +293,11 @@ merged/
 │   ├── manifest/               # NeMo manifests (auto-generated)
 │   ├── normalized/             # Canonical WAV + normalized TSV + metadata
 │   ├── output_segment/         # Sentence-level clips + final JSON
-│   └── wordlevel_alignment/    # ASS + CTM alignment files
+│   ├── wordlevel_alignment/    # ASS + CTM alignment files
+│   └── dropped_segments/       # Audit logs for filtered/dropped segments
 ├── merged/                     # ← Final outputs appear here (.json, .csv, .png)
-├── utils/models/               # ← Pre-downloaded models (mounted at runtime)
-│   ├── lid.176.bin             #   FastText language-ID model
-│   ├── nemo/                   #   NeMo .nemo checkpoints
-│   └── huggingface/            #   HuggingFace model snapshots
+├── utils/models/               # ← Shared model root (mounted at runtime)
+│   └── ...                     #   FastText / NeMo / HuggingFace assets
 ├── scripts/
 │   ├── download_models.py      # Download models for offline use
 │   ├── normalize_tsv.py        # Text normalization
@@ -306,11 +324,14 @@ Run any script with `-h` / `--help` for full argument documentation.
 |---|---|
 | `--input-id` | Process a single audio‑transcript pair (optional; omit for batch mode) |
 | `--input-id-file` | Path to file with one input ID per line (for batch processing a subset) |
-| `--lang` | `ca` or `es` (default: `ca`) |
+| `--lang` | `ca`, `es`, `eu`, or `gl` (default: `ca`) |
 | `--max-duration` | Maximum segment duration in seconds (default: `30`) |
-| `--lid-model-path` | FastText language-ID model file (default: `$LID_MODEL_PATH` or `utils/models/lid.176.bin`) |
-| `--nemo-model-dir` | Directory with local NeMo checkpoints (default: `$NEMO_MODEL_DIR` or `utils/models/nemo`) |
-| `--hf-model-dir` | HuggingFace cache root (default: `$HF_MODEL_DIR` or `utils/models/huggingface`) |
+| `--min-duration` | Minimum segment duration in seconds (default: `2`) |
+| `--device` | `auto`, `cuda`, or `cpu` for ASR execution |
+| `--lid-model-path` | FastText language-ID model file (default: `$LID_MODEL_PATH` or `utils/models/fasttext/lid.176.bin`) |
+| `--nemo-model-dir` | Directory with local NeMo checkpoints (default: `$NEMO_MODEL_DIR` or the shared model root) |
+| `--hf-model-dir` | HuggingFace cache root (default: `$HF_MODEL_DIR` or the shared model root) |
+| `--skip-gl-extra-asr` | Skip the optional Galician sidecar enrichment step |
 
 ### `scripts/download_models.py`
 
@@ -324,12 +345,12 @@ Run any script with `-h` / `--help` for full argument documentation.
 | Argument | Description |
 |---|---|
 | `--input-id` | WAV + TSV filename stem (required) |
-| `--lang` | `ca` or `es` (default: `ca`) |
+| `--lang` | `ca`, `es`, `eu`, or `gl` (default: `ca`) |
 | `--output` | Custom JSON filename |
 | `--device` | `cuda`, `cpu`, or `auto` (default: `auto`) |
-| `--lid-model-path` | FastText language-ID model file (default: `$LID_MODEL_PATH` or `utils/models/lid.176.bin`) |
-| `--nemo-model-dir` | Directory with local NeMo checkpoints (default: `$NEMO_MODEL_DIR` or `utils/models/nemo`) |
-| `--hf-model-dir` | HuggingFace cache root (default: `$HF_MODEL_DIR` or `utils/models/huggingface`) |
+| `--lid-model-path` | FastText language-ID model file (default: `$LID_MODEL_PATH` or `utils/models/fasttext/lid.176.bin`) |
+| `--nemo-model-dir` | Directory with local NeMo checkpoints (default: `$NEMO_MODEL_DIR` or the shared model root) |
+| `--hf-model-dir` | HuggingFace cache root (default: `$HF_MODEL_DIR` or the shared model root) |
 
 ### `scripts/rover_merge.py`
 
@@ -337,6 +358,10 @@ Run any script with `-h` / `--help` for full argument documentation.
 |---|---|
 | `input_glob` | Single JSON file or quoted glob pattern |
 | `-o`, `--out-dir` | Destination folder (default: `merged/`) |
+| `--fields` | Explicit `norm_*` fields to merge instead of auto-detecting them |
+| `--langs` | Language codes to keep during merge (default: `ca es eu gl`) |
+| `--norm` | Normalize text before scoring (lowercase + punctuation stripping) |
+| `--strategy` | Merge strategy: `centroid` or `vote` |
 | `--csv` | Emit per‑segment CSV alongside the merged JSON |
 | `--plot` | Save corpus‑level CER bar chart (`.png`) |
 
@@ -381,11 +406,11 @@ docker run --rm -v $(pwd)/utils/models:/app/utils/models \
 
 **`lid.176.bin cannot be opened for loading!`**
 
-The `lid.176.bin` file must exist on the **host** inside `utils/models/`. When you mount
+The `lid.176.bin` file must exist on the **host** inside `utils/models/fasttext/`. When you mount
 `utils/models/` into the container, it overwrites the copy that was downloaded during image build:
 ```bash
 wget -q "https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN/download" \
-  -O utils/models/lid.176.bin
+  -O utils/models/fasttext/lid.176.bin
 ```
 
 **Permission denied on `utils/models/`, `inputs/`, or `merged/`**
@@ -395,7 +420,6 @@ If you ran Docker without `--user $(id -u):$(id -g)`, files may be owned by root
 sudo chown -R $(whoami) utils/models/ inputs/ merged/
 ```
 To prevent this, always include `--user $(id -u):$(id -g)` in `docker run` commands.
-The `run_singularity.sh` script detects and auto-fixes this.
 
 **Singularity build fails with "no space left on device"**
 
