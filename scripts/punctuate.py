@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 from pathlib import Path
 
 import torch
+from loguru import logger
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -15,9 +15,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from fsp.core.punctuation import process_file
 from fsp.utils.paths import HF_MODEL_DIR_ENV_VAR
-
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 def main() -> int:
@@ -36,33 +33,39 @@ def main() -> int:
         type=Path,
         help=f"Directory containing the HuggingFace cache root (default: ${HF_MODEL_DIR_ENV_VAR})",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Batch size for punctuation inference",
+    )
 
     args = parser.parse_args()
 
     in_path = Path(args.input)
     if not in_path.exists():
-        logging.error("Input file does not exist: %s", in_path)
+        logger.error("Input file does not exist: {}", in_path)
         return 2
     if not in_path.is_file():
-        logging.error("Input is not a file: %s", in_path)
+        logger.error("Input is not a file: {}", in_path)
         return 2
     if in_path.suffix.lower() != ".json":
-        logging.error("Input must be a .json file: %s", in_path)
+        logger.error("Input must be a .json file: {}", in_path)
         return 2
 
     device = args.device
     if device == "cuda" and not torch.cuda.is_available():
-        logging.warning("CUDA requested but not available; falling back to CPU.")
+        logger.warning("CUDA requested but not available; falling back to CPU.")
         device = "cpu"
     device_id = 0 if device == "cuda" else -1
 
     try:
-        process_file(in_path, device_id, hf_model_dir=args.hf_model_dir)
+        process_file(in_path, device_id, hf_model_dir=args.hf_model_dir, batch_size=args.batch_size)
     except Exception:
-        logging.exception("Failed to process file: %s", in_path)
+        logger.exception("Failed to process file: {}", in_path)
         return 1
 
-    logging.info("Done.")
+    logger.info("Done.")
     return 0
 
 

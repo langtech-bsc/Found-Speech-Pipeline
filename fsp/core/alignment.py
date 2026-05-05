@@ -7,24 +7,30 @@ This module contains alignment processing functions migrated from:
 
 from __future__ import annotations
 
+import io
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Tuple
 
 import torch
 from loguru import logger
 
-from fsp.core.text import clean_apostrophes, clean_text
+from fsp.core.text import clean_text
 from fsp.utils.language import choose_language, choose_language_from_predictions, predict_languages
 from fsp.utils.models import (
     configure_model_environment,
     find_local_nemo_checkpoint,
     load_model,
+    suppress_nemo_restore_warnings,
+    transcribe_model,
+    transcribe_model_batch,
     unload_model,
 )
 from fsp.utils.paths import ALIGN_DIR, LOG_DIR, MANIFEST_DIR, NORM_DIR, OUTPUT_SEGMENT_DIR, ROOT
@@ -71,6 +77,7 @@ CTC_MODELS = {
 
 LEGACY_KEYS = {"pred_text", "cer_score"}
 MIN_SEGMENT_LANGUAGE_CONFIDENCE = 0.35
+DEFAULT_ASR_BATCH_SIZE = 8
 
 
 def _format_language_predictions(predictions: List[Tuple[str, float]]) -> str:
@@ -95,40 +102,70 @@ def _clean_alignment_text(text: str, lang: str) -> str:
     return "|".join(part for part in cleaned_parts if part)
 
 
-def _clean_singleton_json_array(txt: str) -> str:
-    """
-    Some NeMo RNN-T checkpoints return their transcript wrapped like
-    '["text"]' (or "['text']") – i.e. a JSON list encoded as a string.
-    Detect and unwrap that safely.
-    """
-    s = txt.strip()
-    if not (s.startswith('["') or s.startswith("['")):
-        return s
+def _chunked(items: List[Any], size: int) -> Iterable[List[Any]]:
+    for idx in range(0, len(items), size):
+        yield items[idx : idx + size]
+
+
+def _normalize_transcription(result: Dict[str, Any], norm_key: str, transcription: str, seg_lang: str, model_name: str) -> None:
     try:
-        parsed = json.loads(s.replace("'", '"'))
-        if isinstance(parsed, list) and len(parsed) == 1:
-            return str(parsed[0]).strip()
-    except Exception:
-        pass
-    return s[2:-2].strip()
+        result[norm_key] = clean_text(transcription, seg_lang, False, False)
+    except Exception as err:
+        logging.warning("[norm_script:] %s on %s: %s", model_name, result["segment_path"], err)
+        result[norm_key] = ""
 
 
+def _populate_model_predictions(
+    segs: List[Dict[str, Any]],
+    model: Any,
+    name: str,
+    kind: str,
+    model_name: str,
+    seg_lang: str,
+    batch_size: int = DEFAULT_ASR_BATCH_SIZE,
+) -> None:
+    pending: List[Dict[str, Any]] = []
 
-def transcribe(model: Any, kind: str, audio: str, lang: str = "ca") -> str:
-    """Run model on audio and normalize the string it returns."""
-    if kind == "pipe":
-        out = model(audio, generate_kwargs={"task": "transcribe", "language": lang})
-        if isinstance(out, dict):
-            txt = out.get("text", "")
-        elif isinstance(out, list) and out and isinstance(out[0], dict):
-            txt = " ".join(d.get("text", "") for d in out)
-        else:
-            txt = str(out)
-    else:
-        out = model.transcribe([audio], batch_size=1)[0]
-        txt = out if isinstance(out, str) else getattr(out, "text", str(out))
+    for result in segs:
+        key = f"pred_text_{name}"
+        norm_key = f"norm_text_{name}"
+        transcription = result.get(key, "") or ""
+        if transcription:
+            if norm_key not in result:
+                _normalize_transcription(result, norm_key, transcription, seg_lang, model_name)
+            continue
+        pending.append(result)
 
-    return clean_apostrophes(_clean_singleton_json_array(txt))
+    for batch in _chunked(pending, batch_size):
+        audio_paths = [str(result["segment_path"]) for result in batch]
+        try:
+            transcriptions = transcribe_model_batch(model, kind, audio_paths, lang=seg_lang, batch_size=batch_size)
+            logger.info(
+                "Batch ASR succeeded model={} kind={} batch_size={} inputs={} outputs={}",
+                model_name,
+                kind,
+                batch_size,
+                len(audio_paths),
+                len(transcriptions),
+            )
+            for result, transcription in zip(batch, transcriptions, strict=True):
+                key = f"pred_text_{name}"
+                norm_key = f"norm_text_{name}"
+                result[key] = transcription
+                _normalize_transcription(result, norm_key, transcription, seg_lang, model_name)
+        except Exception as err:
+            logging.warning("%s batch on %s items failed: %s", model_name, len(batch), err)
+            for result in batch:
+                key = f"pred_text_{name}"
+                norm_key = f"norm_text_{name}"
+                try:
+                    transcription = transcribe_model(model, kind, str(result["segment_path"]), lang=seg_lang)
+                    result[key] = transcription
+                except Exception as item_err:
+                    logging.warning("%s on %s: %s", model_name, result["segment_path"], item_err)
+                    result[key] = ""
+                    transcription = ""
+                _normalize_transcription(result, norm_key, transcription, seg_lang, model_name)
 
 
 def hhmmss_to_sec(t: str | int | float) -> float:
@@ -216,6 +253,8 @@ def run_forced_alignment(
         align_device,
         align_device,
     )
+    env = os.environ.copy()
+    env["NEMO_SUPPRESS_SETUP_WARNINGS"] = "1"
     subprocess.run(
         [
             sys.executable,
@@ -227,8 +266,10 @@ def run_forced_alignment(
             f"transcribe_device={align_device}",
             f"viterbi_device={align_device}",
             "additional_segment_grouping_separator=|",
+            "hydra.job.chdir=False",
             "hydra.run.dir=.",
         ],
+        env=env,
         check=True,
     )
 
@@ -244,8 +285,12 @@ def generate_final_data(
     nemo_model_dir: str | Path | None = None,
     hf_model_dir: str | Path | None = None,
     min_language_confidence: float = MIN_SEGMENT_LANGUAGE_CONFIDENCE,
+    asr_batch_size: int = DEFAULT_ASR_BATCH_SIZE,
 ) -> Path:
     """Generate word-level aligned JSON with ASR enrichment."""
+    if asr_batch_size < 1:
+        raise ValueError("asr_batch_size must be >= 1")
+
     model_paths = configure_model_environment(
         lid_model_path=lid_model_path,
         nemo_model_dir=nemo_model_dir,
@@ -267,7 +312,8 @@ def generate_final_data(
     if not resolved_lid_model.is_file():
         raise FileNotFoundError(f"language-ID model not found: {resolved_lid_model}")
     logger.info(f"Loading language-ID model: {resolved_lid_model}")
-    lid_model = fasttext.load_model(str(resolved_lid_model))
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        lid_model = fasttext.load_model(str(resolved_lid_model))
 
     resolved_device = (
         "cpu"
@@ -287,10 +333,11 @@ def generate_final_data(
 
     if local_nemo is not None and local_nemo.is_file():
         logger.info(f"Loading local NeMo model: {local_nemo}")
-        primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(
-            str(local_nemo),
-            map_location=resolved_device,
-        )
+        with suppress_nemo_restore_warnings():
+            primary_asr = nemo_asr.models.EncDecCTCModelBPE.restore_from(
+                str(local_nemo),
+                map_location=resolved_device,
+            )
         aligner_model_arg = f"model_path={local_nemo}"
     else:
         raise FileNotFoundError(
@@ -469,29 +516,15 @@ def generate_final_data(
                     hf_model_dir=model_paths.hf_model_dir,
                 )
                 logger.info(f"Model {name} loaded on device {resolved_device}")
-                for result in segs:
-                    key = f"pred_text_{name}"
-                    norm_key = f"norm_text_{name}"
-                    transcription = result.get(key, "") or ""
-                    if transcription:
-                        if norm_key not in result:
-                            try:
-                                result[norm_key] = clean_text(transcription, seg_lang, False, False)
-                            except Exception as err:
-                                logging.warning("[norm_script:] %s on %s: %s", model_name, result["segment_path"], err)
-                                result[norm_key] = ""
-                        continue
-                    try:
-                        transcription = transcribe(model, kind, result["segment_path"], lang=seg_lang)
-                        result[key] = transcription
-                    except Exception as err:
-                        logging.warning("%s on %s: %s", model_name, result["segment_path"], err)
-                        result[key] = ""
-                    try:
-                        result[norm_key] = clean_text(transcription, seg_lang, False, False)
-                    except Exception as err:
-                        logging.warning("[norm_script:] %s on %s: %s", model_name, result["segment_path"], err)
-                        result[norm_key] = ""
+                _populate_model_predictions(
+                    segs,
+                    model,
+                    name,
+                    kind,
+                    model_name,
+                    seg_lang,
+                    batch_size=asr_batch_size,
+                )
             except Exception as err:
                 logging.warning("Could not load model %s (%s): %s - skipping", name, model_name, err)
                 logger.warning(f"Skipping model {name}: {err}")
@@ -510,7 +543,6 @@ def generate_final_data(
 __all__ = [
     "MODELS_BY_LANG",
     "CTC_MODELS",
-    "transcribe",
     "hhmmss_to_sec",
     "build_manifest",
     "run_forced_alignment",

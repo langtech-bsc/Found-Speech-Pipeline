@@ -46,6 +46,7 @@ class Pipeline:
         self,
         lang: str = "ca",
         device: str = "auto",
+        asr_batch_size: int = 8,
         max_duration: float = 30,
         min_duration: float = 2,
         lid_model_path: Optional[Path] = None,
@@ -59,6 +60,7 @@ class Pipeline:
         Args:
             lang: Primary language ('ca', 'es', 'eu', or 'gl')
             device: Device for ASR ('auto', 'cuda', 'cpu')
+            asr_batch_size: Batch size for segment-level ASR inference
             max_duration: Maximum segment duration in seconds
             min_duration: Minimum segment duration in seconds
             lid_model_path: Path to the FastText language-ID model file
@@ -68,9 +70,12 @@ class Pipeline:
         """
         if device not in ("auto", "cuda", "cpu"):
             raise ValueError("device must be 'auto', 'cuda', or 'cpu'")
+        if asr_batch_size < 1:
+            raise ValueError("asr_batch_size must be >= 1")
 
         self.lang = lang
         self.device = device
+        self.asr_batch_size = asr_batch_size
         self.max_duration = max_duration
         self.min_duration = min_duration
         self.lid_model_path = resolve_lid_model_path(lid_model_path)
@@ -148,6 +153,7 @@ class Pipeline:
         lang: Optional[str] = None,
         output_name: Optional[str] = None,
         device: Optional[str] = None,
+        asr_batch_size: Optional[int] = None,
         lid_model_path: Optional[Path] = None,
         nemo_model_dir: Optional[Path] = None,
         hf_model_dir: Optional[Path] = None,
@@ -160,6 +166,7 @@ class Pipeline:
             lang: Language code (default: pipeline language)
             output_name: Custom output JSON name
             device: Device for ASR ('auto', 'cuda', 'cpu')
+            asr_batch_size: Batch size for segment-level ASR inference
             lid_model_path: Path to the FastText language-ID model file
             nemo_model_dir: Directory containing local NeMo checkpoints
             hf_model_dir: Directory containing the HuggingFace cache root
@@ -169,11 +176,13 @@ class Pipeline:
         """
         lang = lang or self.lang
         device = device or self.device
+        asr_batch_size = asr_batch_size or self.asr_batch_size
         return generate_final_data(
             input_id=input_id,
             lang=lang,
             output_name=output_name,
             device=device,
+            asr_batch_size=asr_batch_size,
             lid_model_path=lid_model_path or self.lid_model_path,
             nemo_model_dir=nemo_model_dir or self.nemo_model_dir,
             hf_model_dir=hf_model_dir or self.hf_model_dir,

@@ -5,12 +5,12 @@ Punctuation and capitalization restoration utilities.
 from __future__ import annotations
 
 import json
-import logging
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 import torch
+from loguru import logger
 from transformers import (
     AutoModelForSeq2SeqLM,
     AutoModelForTokenClassification,
@@ -23,7 +23,8 @@ from fsp.utils.paths import resolve_hf_model_dir
 
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.pipelines.base")
 
-LOG = logging.getLogger(__name__)
+LOG = logger.bind(name=__name__)
+DEFAULT_PUNCT_BATCH_SIZE = 8
 
 MODELS: Dict[str, Any] = {}
 
@@ -72,7 +73,7 @@ def load_model_cached(lang: str, device: int, hf_model_dir: str | Path | None = 
 
     model_name, model_type = MODEL_MAP[lang]
     model_dir = resolve_local_model_dir(model_name, hf_model_dir=hf_model_dir)
-    LOG.info("Loading %s model from local path: %s (%s)", lang, model_dir, model_type)
+    LOG.info("Loading {} model from local path: {} ({})", lang, model_dir, model_type)
 
     if model_type == "token-classification":
         tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
@@ -108,6 +109,10 @@ def apply_umuteam_punctuation(text: str, pipe) -> str:
         return ""
 
     results = pipe(text)
+    return _format_umuteam_results(text, results)
+
+
+def _format_umuteam_results(text: str, results: List[Dict[str, Any]]) -> str:
     words: List[Tuple[str, str]] = []
     current_start = None
     current_end = 0
@@ -150,9 +155,16 @@ def apply_umuteam_punctuation(text: str, pipe) -> str:
 
 
 def apply_seq2seq_punctuation(text: str, model_tuple) -> str:
+    if not text.strip():
+        return ""
+
     model, tokenizer = model_tuple
     inputs = tokenizer(text, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    return _generate_seq2seq_batch(model, tokenizer, inputs)[0]
+
+
+def _generate_seq2seq_batch(model, tokenizer, inputs: Dict[str, torch.Tensor]) -> List[str]:
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
@@ -170,10 +182,55 @@ def apply_seq2seq_punctuation(text: str, model_tuple) -> str:
             outputs = model.generate(
                 **inputs,
                 generation_config=generation_config,
-                max_new_tokens=len(inputs["input_ids"][0]) * 2,
+                max_new_tokens=int(inputs["attention_mask"].sum(dim=1).max().item()) * 2,
             )
 
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return tokenizer.batch_decode(outputs, skip_special_tokens=True)
+
+
+def apply_umuteam_punctuation_batch(
+    texts: Iterable[str],
+    pipe,
+    batch_size: int = DEFAULT_PUNCT_BATCH_SIZE,
+) -> List[str]:
+    text_list = list(texts)
+    if not text_list:
+        return []
+
+    outputs = pipe(text_list, batch_size=batch_size)
+    if len(outputs) != len(text_list):
+        raise ValueError(f"Expected {len(text_list)} punctuation outputs, got {len(outputs)}")
+
+    return [
+        _format_umuteam_results(text, result) if text.strip() else ""
+        for text, result in zip(text_list, outputs, strict=True)
+    ]
+
+
+def apply_seq2seq_punctuation_batch(
+    texts: Iterable[str],
+    model_tuple,
+) -> List[str]:
+    text_list = list(texts)
+    if not text_list:
+        return []
+
+    nonempty_idx = [idx for idx, text in enumerate(text_list) if text.strip()]
+    if not nonempty_idx:
+        return ["" for _ in text_list]
+
+    model, tokenizer = model_tuple
+    nonempty_texts = [text_list[idx] for idx in nonempty_idx]
+    inputs = tokenizer(nonempty_texts, return_tensors="pt", padding=True)
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    decoded = _generate_seq2seq_batch(model, tokenizer, inputs)
+    if len(decoded) != len(nonempty_texts):
+        raise ValueError(f"Expected {len(nonempty_texts)} seq2seq outputs, got {len(decoded)}")
+
+    results = ["" for _ in text_list]
+    for idx, text in zip(nonempty_idx, decoded, strict=True):
+        results[idx] = text
+    return results
 
 
 def punctuate_text(text: str, lang: str, device: int, hf_model_dir: str | Path | None = None) -> str:
@@ -229,11 +286,36 @@ def _extract_input_text(segment: Dict[str, Any]) -> str:
     return ""
 
 
-def process_file(json_path: Path, device: int, hf_model_dir: str | Path | None = None) -> None:
-    LOG.info("Processing %s ...", json_path)
+def punctuate_text_batch(
+    texts: List[str],
+    lang: str,
+    device: int,
+    hf_model_dir: str | Path | None = None,
+    batch_size: int = DEFAULT_PUNCT_BATCH_SIZE,
+) -> List[str]:
+    model_obj, kind = load_model_cached(lang, device, hf_model_dir=hf_model_dir)
+    if kind == "token-classification":
+        return apply_umuteam_punctuation_batch(texts, model_obj, batch_size=batch_size)
+    if kind == "seq2seq":
+        return apply_seq2seq_punctuation_batch(texts, model_obj)
+    return texts
+
+
+def process_file(
+    json_path: Path,
+    device: int,
+    hf_model_dir: str | Path | None = None,
+    batch_size: int = DEFAULT_PUNCT_BATCH_SIZE,
+) -> None:
+    LOG.info("Processing {} ...", json_path)
     data = _read_json(json_path)
     video_data = _get_video_data(data, json_path)
     results = _get_results(video_data, json_path)
+
+    if batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+
+    grouped_segments: Dict[str, List[Tuple[Dict[str, Any], str]]] = {}
 
     for segment in results:
         lang = _require_language(segment, json_path)
@@ -243,15 +325,41 @@ def process_file(json_path: Path, device: int, hf_model_dir: str | Path | None =
             continue
 
         segment["text_normalized"] = input_text
-        segment["text_punctuated"] = punctuate_text(
-            input_text,
-            lang,
-            device,
-            hf_model_dir=hf_model_dir,
-        )
+        grouped_segments.setdefault(lang, []).append((segment, input_text))
+
+    for lang, items in grouped_segments.items():
+        for start in range(0, len(items), batch_size):
+            batch = items[start : start + batch_size]
+            texts = [text for _segment, text in batch]
+            try:
+                punctuated = punctuate_text_batch(
+                    texts,
+                    lang,
+                    device,
+                    hf_model_dir=hf_model_dir,
+                    batch_size=batch_size,
+                )
+                LOG.info(
+                    "Batch punctuation succeeded lang={} batch_size={} inputs={} outputs={}",
+                    lang,
+                    batch_size,
+                    len(texts),
+                    len(punctuated),
+                )
+                for (segment, _text), output in zip(batch, punctuated, strict=True):
+                    segment["text_punctuated"] = output
+            except Exception as err:
+                LOG.warning("Punctuation batch failed lang={} size={}: {}", lang, len(texts), err)
+                for segment, text in batch:
+                    segment["text_punctuated"] = punctuate_text(
+                        text,
+                        lang,
+                        device,
+                        hf_model_dir=hf_model_dir,
+                    )
 
     _write_json(json_path, data)
-    LOG.info("Updated %s", json_path)
+    LOG.info("Updated {}", json_path)
 
 
 __all__ = [

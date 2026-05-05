@@ -59,6 +59,12 @@ def main() -> None:
         help="Run ASR on cuda / cpu",
     )
     ap.add_argument(
+        "--asr-batch-size",
+        type=int,
+        default=8,
+        help="Batch size for segment-level ASR inference",
+    )
+    ap.add_argument(
         "--lid-model-path",
         type=Path,
         help=f"Path to lid.176.bin (default: ${LID_MODEL_PATH_ENV_VAR} or utils/models/lid.176.bin)",
@@ -90,6 +96,7 @@ def main() -> None:
     pipeline = Pipeline(
         lang=args.lang,
         device=args.device,
+        asr_batch_size=args.asr_batch_size,
         max_duration=args.max_duration,
         min_duration=args.min_duration,
         lid_model_path=args.lid_model_path,

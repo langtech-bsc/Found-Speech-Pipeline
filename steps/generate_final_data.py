@@ -54,6 +54,12 @@ def parse_args() -> argparse.Namespace:
         help="Run ASR on cuda / cpu",
     )
     parser.add_argument(
+        "--asr-batch-size",
+        type=int,
+        default=8,
+        help="Batch size for segment-level ASR inference",
+    )
+    parser.add_argument(
         "--lid-model-path",
         type=Path,
         help=f"Path to lid.176.bin (default: ${LID_MODEL_PATH_ENV_VAR} or utils/models/lid.176.bin)",
@@ -83,6 +89,7 @@ def main() -> None:
             lang=args.lang,
             output_name=output_name,
             device=args.device,
+            asr_batch_size=args.asr_batch_size,
             lid_model_path=args.lid_model_path,
             nemo_model_dir=args.nemo_model_dir,
             hf_model_dir=args.hf_model_dir,
