@@ -23,6 +23,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SIF="${SCRIPT_DIR}/fsp-pipeline.sif"
 DEFAULT_MODELS_ROOT="/gpfs/projects/bsc88/speech/ASR/models"
 
+if [[ -f "${SCRIPT_DIR}/.env" ]]; then
+    source "${SCRIPT_DIR}/.env"
+fi
+
 # Detect Singularity or Apptainer
 if command -v apptainer &>/dev/null; then
     RUNNER=apptainer

@@ -30,6 +30,16 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEFAULT_SIF="/gpfs/projects/bsc88/singularity-images/fsp-pipeline.sif"
+
+if [[ -f "${SCRIPT_DIR}/.env" ]]; then
+    # Allow local HPC overrides such as SIF=/path/to/image.sif.
+    source "${SCRIPT_DIR}/.env"
+fi
+
+SIF_PATH="${SIF:-${DEFAULT_SIF}}"
+
 num_buckets=""
 output_dir=""
 lang=""
@@ -64,13 +74,13 @@ else
     echo "Using existing output directory '${output_dir}'"
 fi
 
-singularity exec --no-home /gpfs/projects/bsc88/singularity-images/fsp-pipeline.sif python scripts/split.py "${input_dir}" -n "${num_buckets}" -o "${output_dir}"
+singularity exec --no-home "${SIF_PATH}" python "${SCRIPT_DIR}/scripts/split.py" "${input_dir}" -n "${num_buckets}" -o "${output_dir}"
 
 echo ""
 
 for file in "${output_dir}"/*; do
     if [ -f "$file" ]; then
         echo "Running pipeline with input id file: $file";
-        sbatch run_singularity.sh --input-id-file "${file}" --lang "${lang}"
+        sbatch "${SCRIPT_DIR}/run_singularity.sh" --input-id-file "${file}" --lang "${lang}"
     fi
 done

@@ -121,7 +121,10 @@ def load_model(
             raise FileNotFoundError(
                 f"NeMo checkpoint not found: {resolve_nemo_model_dir(nemo_model_dir) / model_name / f'{model_name}.nemo'}"
             )
-        return EncDecRNNTBPEModel.restore_from(str(restore_path), map_location=device).to(device).eval()
+        logger.info("Loading NeMo RNNT model '{}' from {} on requested device {}", model_name, restore_path, device)
+        model = EncDecRNNTBPEModel.restore_from(str(restore_path), map_location=device).to(device).eval()
+        log_loaded_model_device(model_name, model, requested_device=device)
+        return model
     if kind == "ctc":
         import nemo.collections.asr as nemo_asr
 
@@ -130,7 +133,10 @@ def load_model(
             raise FileNotFoundError(
                 f"NeMo checkpoint not found: {resolve_nemo_model_dir(nemo_model_dir) / model_name / f'{model_name}.nemo'}"
             )
-        return nemo_asr.models.EncDecCTCModelBPE.restore_from(str(restore_path), map_location=device).to(device).eval()
+        logger.info("Loading NeMo CTC model '{}' from {} on requested device {}", model_name, restore_path, device)
+        model = nemo_asr.models.EncDecCTCModelBPE.restore_from(str(restore_path), map_location=device).to(device).eval()
+        log_loaded_model_device(model_name, model, requested_device=device)
+        return model
     if kind == "multi":
         from nemo.collections.asr.models.aed_multitask_models import EncDecMultiTaskModel
 
@@ -139,12 +145,43 @@ def load_model(
             raise FileNotFoundError(
                 f"NeMo checkpoint not found: {resolve_nemo_model_dir(nemo_model_dir) / model_name / f'{model_name}.nemo'}"
             )
+        logger.info("Loading NeMo multitask model '{}' from {} on requested device {}", model_name, restore_path, device)
         model = EncDecMultiTaskModel.restore_from(str(restore_path), map_location=device).to(device).eval()
         model.cfg.prompt_format = model.prompt_format = "canary"
         model.cfg.decoding.beam.beam_size = 1
         model.change_decoding_strategy(model.cfg.decoding)
+        log_loaded_model_device(model_name, model, requested_device=device)
         return model
     raise ValueError(f"Unknown model kind: {kind}")
+
+
+def get_model_device(model: Any) -> str:
+    """
+    Best-effort device inspection for loaded ASR models.
+    """
+    torch_model = getattr(model, "model", model)
+    if hasattr(torch_model, "device"):
+        return str(torch_model.device)
+    if hasattr(torch_model, "parameters"):
+        try:
+            return str(next(torch_model.parameters()).device)
+        except (StopIteration, TypeError):
+            pass
+    return "unknown"
+
+
+def log_loaded_model_device(model_name: str, model: Any, requested_device: str) -> None:
+    """
+    Emit a consistent post-load device log for every ASR model.
+    """
+    actual_device = get_model_device(model)
+    logger.info(
+        "Model '{}' ready. requested_device={} actual_device={} cuda_available={}",
+        model_name,
+        requested_device,
+        actual_device,
+        torch.cuda.is_available(),
+    )
 
 
 def unload_model(model: Any) -> None:

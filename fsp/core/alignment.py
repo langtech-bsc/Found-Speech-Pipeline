@@ -204,11 +204,18 @@ def run_forced_alignment(
     manifest_fp: Path,
     input_id: str,
     aligner_model_arg: str,
+    align_device: str = "cpu",
 ) -> Path:
     """Run NeMo forced aligner."""
     input_align_dir = ALIGN_DIR / input_id
     input_align_dir.mkdir(parents=True, exist_ok=True)
 
+    logger.info(
+        "Running NeMo forced alignment for '{}' with transcribe_device={} viterbi_device={}",
+        input_id,
+        align_device,
+        align_device,
+    )
     subprocess.run(
         [
             sys.executable,
@@ -217,8 +224,8 @@ def run_forced_alignment(
             f"manifest_filepath={manifest_fp}",
             f"output_dir={input_align_dir}",
             "align_using_pred_text=false",
-            "transcribe_device=cpu",
-            "viterbi_device=cpu",
+            f"transcribe_device={align_device}",
+            f"viterbi_device={align_device}",
             "additional_segment_grouping_separator=|",
             "hydra.run.dir=.",
         ],
@@ -299,7 +306,13 @@ def generate_final_data(
         raise FileNotFoundError(f"metadata not found: {meta_path}")
 
     manifest_fp = build_manifest(meta_path, lid_model, pri_lang=lang)
-    input_align_dir = run_forced_alignment(manifest_fp, input_id, aligner_model_arg)
+    align_device = resolved_device if resolved_device == "cuda" else "cpu"
+    input_align_dir = run_forced_alignment(
+        manifest_fp,
+        input_id,
+        aligner_model_arg,
+        align_device=align_device,
+    )
 
     out_seg_dir = OUTPUT_SEGMENT_DIR / input_id
     out_seg_dir.mkdir(parents=True, exist_ok=True)

@@ -30,6 +30,7 @@ ENV/
 *.sif
 model_cache/
 ingestion/
+inputs/
 inputs/manifest/
 inputs/normalized/
 inputs/output.log
