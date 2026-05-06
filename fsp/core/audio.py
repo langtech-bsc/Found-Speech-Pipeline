@@ -82,6 +82,9 @@ def normalize_audio(
     cmd = [
         FFMPEG_CMD,
         "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
         "-i",
         str(wav_src),
         "-ar",
@@ -92,7 +95,10 @@ def normalize_audio(
         "s16",
         str(wav_dst),
     ]
-    subprocess.run(cmd, check=True)
+    completed = subprocess.run(cmd, capture_output=True, text=True)
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip() or "<empty>"
+        raise RuntimeError(f"ffmpeg normalization failed for {input_id}: {stderr}")
 
     # Calculate duration
     with wave.open(str(wav_dst), "rb") as wf:
@@ -113,7 +119,7 @@ def normalize_audio(
     }
     meta_path.write_text(json.dumps([entry], ensure_ascii=False, indent=2), encoding="utf-8")
 
-    logger.info(f"Normalized audio and metadata written to: {output_dir / input_id}")
+    logger.info("Normalized audio and metadata written to {}", output_dir / input_id)
     return output_dir / input_id
 
 
@@ -138,6 +144,8 @@ def filter_and_cleanup(json_path: str, min_dur: float = 2, max_dur: float = 30) 
         data = json.load(f)
 
     # Iterate over each top-level item
+    dropped_count = 0
+    dropped_reasons: dict[str, int] = {}
     for item_key, item_content in data.items():
         if "results" not in item_content:
             continue
@@ -157,6 +165,9 @@ def filter_and_cleanup(json_path: str, min_dur: float = 2, max_dur: float = 30) 
 
             # Remove segments that do NOT satisfy min < duration <= max
             if not (duration > min_dur and duration <= max_dur):
+                dropped_count += 1
+                reason = "duration_out_of_range"
+                dropped_reasons[reason] = dropped_reasons.get(reason, 0) + 1
                 logger.warning(
                     "Dropping segment during duration filter: {:.2f}-{:.2f} dur={:.2f}s outside ({:.2f}, {:.2f}] | path={}",
                     start,
@@ -184,7 +195,12 @@ def filter_and_cleanup(json_path: str, min_dur: float = 2, max_dur: float = 30) 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-    logger.info(f"Filtering complete. Updated JSON written to: {json_path}")
+    logger.info(
+        "Filtering complete. Updated JSON written to {} dropped_segments={} dropped_reasons={}",
+        json_path,
+        dropped_count,
+        dropped_reasons,
+    )
 
 
 __all__ = [

@@ -13,9 +13,13 @@ Modes
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
+from loguru import logger
+
 from fsp.pipeline import Pipeline
+from fsp.utils.logging import build_run_label, build_run_log_dir, setup_logging
 from fsp.utils.paths import (
     HF_MODEL_DIR_ENV_VAR,
     INGESTION_DIR,
@@ -84,6 +88,12 @@ def main() -> None:
         action="store_true",
         help="Skip the GL-specific Apptainer enrichment step",
     )
+    ap.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=("TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"),
+        help="Application log level",
+    )
 
     args = ap.parse_args()
 
@@ -92,6 +102,12 @@ def main() -> None:
 
     if not INGESTION_DIR.exists():
         raise FileNotFoundError("ingestion/ directory not found")
+
+    run_scope = args.input_id or (args.input_id_file.stem if args.input_id_file else "batch")
+    slurm_job_id = os.getenv("SLURM_JOB_ID")
+    run_label = build_run_label("pipeline", run_scope, args.lang, slurm_job_id)
+    run_log_dir = build_run_log_dir(run_label)
+    app_log_path = setup_logging(log_level=args.log_level, run_label=run_label, log_dir=run_log_dir)
 
     pipeline = Pipeline(
         lang=args.lang,
@@ -104,14 +120,13 @@ def main() -> None:
         hf_model_dir=args.hf_model_dir,
         enable_gl_extra_asr=not args.skip_gl_extra_asr,
     )
+    pipeline.set_run_context(run_label=run_label, run_log_dir=run_log_dir)
 
     if args.input_id:
-        print("\n" + "=" * 70)
-        print(f"Processing single audio-transcript pair: {args.input_id}")
-        print("=" * 70)
+        logger.info("Processing input_id={} lang={} app_log={}", args.input_id, args.lang, app_log_path)
 
         output_path = pipeline.run_all(args.input_id)
-        print(f"\nPipeline finished. Final JSON file: {output_path}")
+        logger.info("Pipeline finished. Final JSON file: {}", output_path)
     elif args.input_id_file:
         if not args.input_id_file.exists():
             raise FileNotFoundError(f"Input ID file not found: {args.input_id_file}")
@@ -124,12 +139,17 @@ def main() -> None:
         if not input_ids:
             raise ValueError(f"No IDs found in {args.input_id_file}")
 
-        print(f"\nProcessing {len(input_ids)} IDs from {args.input_id_file}")
+        logger.info(
+            "Processing {} IDs from {} app_log={}",
+            len(input_ids),
+            args.input_id_file,
+            app_log_path,
+        )
         pipeline.run_batch(input_ids=input_ids)
-        print(f"\nPipeline finished. Final JSON files are in {ROVER_DIR}")
+        logger.info("Pipeline finished. Final JSON files are in {}", ROVER_DIR)
     else:
         pipeline.run_batch()
-        print(f"\nPipeline finished. Final JSON files are in {ROVER_DIR}")
+        logger.info("Pipeline finished. Final JSON files are in {}", ROVER_DIR)
 
 
 if __name__ == "__main__":

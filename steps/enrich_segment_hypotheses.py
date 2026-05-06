@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 from pathlib import Path
 
@@ -11,10 +10,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from fsp.core.enrichment import choose_device, enrich_json
+from fsp.utils.logging import build_run_label, setup_logging
 from fsp.utils.paths import HF_MODEL_DIR_ENV_VAR
-
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
     parser.add_argument("--overwrite-existing", action="store_true")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--pipeline-batch-size", type=int, default=8)
     parser.add_argument(
         "--hf-model-dir",
         type=Path,
@@ -40,6 +38,7 @@ def main() -> None:
     args = parse_args()
     input_json = args.input_json.resolve()
     output_json = (args.output_json or input_json).resolve()
+    setup_logging(run_label=build_run_label("gl-enrichment", input_json.stem))
     enrich_json(
         input_json=input_json,
         output_json=output_json,
@@ -49,6 +48,7 @@ def main() -> None:
         overwrite_existing=args.overwrite_existing,
         limit=args.limit,
         hf_model_dir=args.hf_model_dir,
+        pipeline_batch_size=args.pipeline_batch_size,
     )
 
 

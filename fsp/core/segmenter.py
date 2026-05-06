@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
 import pandas as pd
@@ -89,7 +91,8 @@ class Segmenter:
 
     def _asr(self, model: Any, wav: str) -> str:
         """Plain CTC decode."""
-        return model.transcribe(paths2audio_files=[wav], batch_size=1)[0]
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            return model.transcribe(paths2audio_files=[wav], batch_size=1, verbose=False)[0]
 
     def _identify_language(self, text: str) -> str:
         """Identify language of text."""

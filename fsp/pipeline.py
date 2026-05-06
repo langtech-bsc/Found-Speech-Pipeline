@@ -18,6 +18,7 @@ from fsp.core.audio import normalize_audio as _normalize_audio
 from fsp.core.punctuation import process_file as punctuate_file
 from fsp.core.rover import RoverConfig, process_file
 from fsp.core.text import clean_text, remove_chars, split_text
+from fsp.utils.logging import build_run_label, build_run_log_dir, write_captured_output
 from fsp.utils.paths import (
     GL_EXTRA_ASR_IMAGE,
     ROOT,
@@ -82,6 +83,12 @@ class Pipeline:
         self.nemo_model_dir = resolve_nemo_model_dir(nemo_model_dir)
         self.hf_model_dir = resolve_hf_model_dir(hf_model_dir)
         self.enable_gl_extra_asr = enable_gl_extra_asr
+        self.run_label = "pipeline"
+        self.run_log_dir: Optional[Path] = None
+
+    def set_run_context(self, run_label: str, run_log_dir: Optional[Path] = None) -> None:
+        self.run_label = run_label
+        self.run_log_dir = run_log_dir
 
     def normalize_tsv(self, input_tsv: Path, lang: str, mark: str = "|") -> Path:
         """
@@ -157,6 +164,7 @@ class Pipeline:
         lid_model_path: Optional[Path] = None,
         nemo_model_dir: Optional[Path] = None,
         hf_model_dir: Optional[Path] = None,
+        run_log_dir: Optional[Path] = None,
     ) -> Path:
         """
         Run forced alignment + ASR enrichment (Step 3).
@@ -186,6 +194,7 @@ class Pipeline:
             lid_model_path=lid_model_path or self.lid_model_path,
             nemo_model_dir=nemo_model_dir or self.nemo_model_dir,
             hf_model_dir=hf_model_dir or self.hf_model_dir,
+            run_log_dir=run_log_dir,
         )
 
     def duration_filter(self, json_path: Path) -> None:
@@ -230,7 +239,7 @@ class Pipeline:
         )
         process_file(json_path, config)
 
-    def maybe_run_gl_extra_asr(self, out_json_path: Path) -> None:
+    def maybe_run_gl_extra_asr(self, out_json_path: Path, run_log_dir: Optional[Path] = None) -> None:
         if self.lang != "gl" or not self.enable_gl_extra_asr:
             return
 
@@ -274,10 +283,27 @@ class Pipeline:
             "--hf-model-dir",
             str(self.hf_model_dir),
         ]
-        logger.info("Running GL extra ASR enrichment")
-        completed = subprocess.run(cmd, env=env, cwd=ROOT)
+        logger.info("Step 4/7 gl_extra_asr started output={}", out_json_path)
+        completed = subprocess.run(
+            cmd,
+            env=env,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if run_log_dir is not None:
+            write_captured_output(
+                run_log_dir / "gl_extra_asr.log",
+                (
+                    ("stdout", completed.stdout),
+                    ("stderr", completed.stderr),
+                ),
+            )
         if completed.returncode:
+            if completed.stderr.strip():
+                logger.error("GL extra ASR stderr:\n{}", completed.stderr.strip())
             raise RuntimeError("GL extra ASR enrichment failed")
+        logger.info("Step 4/7 gl_extra_asr completed")
 
     def punctuate(self, json_path: Path, device: str = "auto") -> None:
         chosen_device = device
@@ -307,36 +333,35 @@ class Pipeline:
 
         out_json_name = f"final_output_{input_id}.json"
         out_json_path = OUTPUT_SEGMENT_DIR / out_json_name
+        run_log_dir = self.run_log_dir or build_run_log_dir(build_run_label(self.run_label, input_id, self.lang))
 
-        # 1. Normalize TSV
-        logger.info("\nStep 1/7: Normalize TSV")
+        logger.info("Step 1/7 normalize_tsv started input_id={} lang={}", input_id, self.lang)
         self.normalize_tsv(raw_tsv, self.lang, "|")
+        logger.info("Step 1/7 normalize_tsv completed input_id={}", input_id)
 
-        # 2. Normalize audio + metadata
-        logger.info("\nStep 2/7: Normalize audio")
+        logger.info("Step 2/7 normalize_audio started input_id={}", input_id)
         self.normalize_audio(input_id)
+        logger.info("Step 2/7 normalize_audio completed input_id={}", input_id)
 
-        # 3. Generate final data
-        logger.info("\nStep 3/7: Generate final data")
-        self.generate_final_data(input_id, output_name=out_json_name)
+        logger.info("Step 3/7 generate_final_data started input_id={} logs={}", input_id, run_log_dir)
+        self.generate_final_data(input_id, output_name=out_json_name, run_log_dir=run_log_dir)
+        logger.info("Step 3/7 generate_final_data completed input_id={}", input_id)
 
-        # 4. Optional GL extra ASR enrichment
-        logger.info("\nStep 4/7: Optional GL extra ASR enrichment")
-        self.maybe_run_gl_extra_asr(out_json_path)
+        self.maybe_run_gl_extra_asr(out_json_path, run_log_dir=run_log_dir)
 
-        # 5. Duration filter
-        logger.info("\nStep 5/7: Duration filter")
+        logger.info("Step 5/7 duration_filter started input_id={}", input_id)
         self.duration_filter(out_json_path)
+        logger.info("Step 5/7 duration_filter completed input_id={}", input_id)
 
-        # 6. ROVER merge
-        logger.info("\nStep 6/7: ROVER merge")
+        logger.info("Step 6/7 rover_merge started input_id={}", input_id)
         self.rover_merge(out_json_path)
+        logger.info("Step 6/7 rover_merge completed input_id={}", input_id)
 
         rover_json = ROVER_DIR / out_json_name
 
-        # 7. Punctuation
-        logger.info("\nStep 7/7: Punctuation")
+        logger.info("Step 7/7 punctuation started input_id={}", input_id)
         self.punctuate(rover_json)
+        logger.info("Step 7/7 punctuation completed input_id={} output={}", input_id, rover_json)
 
         return rover_json
 
@@ -375,16 +400,14 @@ class Pipeline:
 
         results = []
         for i, input_id in enumerate(input_ids, 1):
-            logger.info("\n" + "=" * 70)
-            logger.info(f"[{i}/{len(input_ids)}] Processing {input_id}")
-            logger.info("=" * 70)
+            logger.info("Batch item {}/{} started input_id={}", i, len(input_ids), input_id)
 
             try:
                 result = self.run_all(input_id)
                 results.append(result)
             except Exception as e:
-                logger.error(f"Failed: {input_id} -> {e}")
-                logger.warning("Skipping.\n")
+                logger.error("Batch item failed input_id={} error={}", input_id, e)
+                logger.warning("Skipping input_id={}", input_id)
 
         return results
 

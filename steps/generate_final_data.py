@@ -22,12 +22,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from fsp.utils.paths import (  # noqa: E402
     HF_MODEL_DIR_ENV_VAR,
     LID_MODEL_PATH_ENV_VAR,
-    LOG_DIR,
     NEMO_MODEL_DIR_ENV_VAR,
 )
-
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-logger.add(LOG_DIR / "output.log", level="INFO")
+from fsp.utils.logging import build_run_label, setup_logging  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,6 +76,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    setup_logging(run_label=build_run_label("generate-final-data", args.input_id, args.lang))
 
     from fsp.core.alignment import generate_final_data
 

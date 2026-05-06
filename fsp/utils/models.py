@@ -58,6 +58,9 @@ def configure_model_environment(
     os.environ["NEMO_CACHE_DIR"] = str(nemo_cache_dir)
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ.setdefault("TQDM_DISABLE", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     return model_paths
 

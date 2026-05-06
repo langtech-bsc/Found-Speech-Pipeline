@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import io
 import json
-import logging
 import os
 import subprocess
 import sys
 import time
+from collections import Counter
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +23,7 @@ import torch
 from loguru import logger
 
 from fsp.core.text import clean_text
+from fsp.utils.logging import sanitize_captured_output, write_captured_output
 from fsp.utils.language import choose_language, choose_language_from_predictions, predict_languages
 from fsp.utils.models import (
     configure_model_environment,
@@ -111,7 +112,7 @@ def _normalize_transcription(result: Dict[str, Any], norm_key: str, transcriptio
     try:
         result[norm_key] = clean_text(transcription, seg_lang, False, False)
     except Exception as err:
-        logging.warning("[norm_script:] %s on %s: %s", model_name, result["segment_path"], err)
+        logger.warning("[norm_script] model={} segment_path={} error={}", model_name, result["segment_path"], err)
         result[norm_key] = ""
 
 
@@ -154,7 +155,7 @@ def _populate_model_predictions(
                 result[key] = transcription
                 _normalize_transcription(result, norm_key, transcription, seg_lang, model_name)
         except Exception as err:
-            logging.warning("%s batch on %s items failed: %s", model_name, len(batch), err)
+            logger.warning("Batch ASR failed model={} batch_items={} error={}", model_name, len(batch), err)
             for result in batch:
                 key = f"pred_text_{name}"
                 norm_key = f"norm_text_{name}"
@@ -162,7 +163,12 @@ def _populate_model_predictions(
                     transcription = transcribe_model(model, kind, str(result["segment_path"]), lang=seg_lang)
                     result[key] = transcription
                 except Exception as item_err:
-                    logging.warning("%s on %s: %s", model_name, result["segment_path"], item_err)
+                    logger.warning(
+                        "Single-item ASR failed model={} segment_path={} error={}",
+                        model_name,
+                        result["segment_path"],
+                        item_err,
+                    )
                     result[key] = ""
                     transcription = ""
                 _normalize_transcription(result, norm_key, transcription, seg_lang, model_name)
@@ -242,6 +248,7 @@ def run_forced_alignment(
     input_id: str,
     aligner_model_arg: str,
     align_device: str = "cpu",
+    run_log_dir: Path | None = None,
 ) -> Path:
     """Run NeMo forced aligner."""
     input_align_dir = ALIGN_DIR / input_id
@@ -255,7 +262,7 @@ def run_forced_alignment(
     )
     env = os.environ.copy()
     env["NEMO_SUPPRESS_SETUP_WARNINGS"] = "1"
-    subprocess.run(
+    completed = subprocess.run(
         [
             sys.executable,
             str(ROOT / "NeMo" / "tools" / "nemo_forced_aligner" / "align.py"),
@@ -270,8 +277,28 @@ def run_forced_alignment(
             "hydra.run.dir=.",
         ],
         env=env,
-        check=True,
+        capture_output=True,
+        text=True,
     )
+    if run_log_dir is not None:
+        write_captured_output(
+            run_log_dir / "forced_alignment.log",
+            (
+                ("stdout", completed.stdout),
+                ("stderr", completed.stderr),
+            ),
+        )
+    if completed.returncode != 0:
+        stderr = sanitize_captured_output(completed.stderr).strip()
+        if stderr:
+            logger.error("Forced alignment stderr:\n{}", stderr)
+        raise subprocess.CalledProcessError(
+            completed.returncode,
+            completed.args,
+            output=completed.stdout,
+            stderr=completed.stderr,
+        )
+    logger.info("Forced alignment completed input_id={} log_file={}", input_id, run_log_dir / "forced_alignment.log" if run_log_dir else "<not_saved>")
 
     return input_align_dir
 
@@ -286,6 +313,7 @@ def generate_final_data(
     hf_model_dir: str | Path | None = None,
     min_language_confidence: float = MIN_SEGMENT_LANGUAGE_CONFIDENCE,
     asr_batch_size: int = DEFAULT_ASR_BATCH_SIZE,
+    run_log_dir: Path | None = None,
 ) -> Path:
     """Generate word-level aligned JSON with ASR enrichment."""
     if asr_batch_size < 1:
@@ -359,6 +387,7 @@ def generate_final_data(
         input_id,
         aligner_model_arg,
         align_device=align_device,
+        run_log_dir=run_log_dir,
     )
 
     out_seg_dir = OUTPUT_SEGMENT_DIR / input_id
@@ -501,13 +530,13 @@ def generate_final_data(
         }
 
     for seg_lang, segs in buckets.items():
-        logger.info(f"\nProcessing language: {seg_lang}, number of segments: {len(segs)}")
+        logger.info("Processing language={} segments={}", seg_lang, len(segs))
         if not segs:
             continue
         for name, kind, model_name in MODELS_BY_LANG[seg_lang]:
             model = None
             try:
-                logging.info("loading %s", model_name)
+                logger.info("Loading ASR model name={} type={} language={}", model_name, kind, seg_lang)
                 model = load_model(
                     kind,
                     model_name,
@@ -515,7 +544,7 @@ def generate_final_data(
                     nemo_model_dir=model_paths.nemo_model_dir,
                     hf_model_dir=model_paths.hf_model_dir,
                 )
-                logger.info(f"Model {name} loaded on device {resolved_device}")
+                logger.info("Model {} loaded on device {}", name, resolved_device)
                 _populate_model_predictions(
                     segs,
                     model,
@@ -526,16 +555,23 @@ def generate_final_data(
                     batch_size=asr_batch_size,
                 )
             except Exception as err:
-                logging.warning("Could not load model %s (%s): %s - skipping", name, model_name, err)
-                logger.warning(f"Skipping model {name}: {err}")
+                logger.warning("Skipping model {} model_name={} error={}", name, model_name, err)
             finally:
                 unload_model(model)
 
     final_fp = OUTPUT_SEGMENT_DIR / output_name
     final_fp.write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
     _write_drop_log(drop_log_path, dropped_segments)
-    logger.info("Dropped-segment log written to {}", drop_log_path)
-    logger.info(f"JSON written to {final_fp} ({time.perf_counter() - start:.1f}s)")
+    dropped_by_reason = dict(
+        sorted(Counter(item.get("reason", "unknown") for item in dropped_segments).items())
+    )
+    logger.info(
+        "Dropped-segment log written to {} dropped_segments={} dropped_reasons={}",
+        drop_log_path,
+        len(dropped_segments),
+        dropped_by_reason,
+    )
+    logger.info("JSON written to {} elapsed_s={:.1f}", final_fp, time.perf_counter() - start)
 
     return final_fp
 
