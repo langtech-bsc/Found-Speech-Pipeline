@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Tuple
 import torch
 from loguru import logger
 
+from fsp.core.audio import filter_segment_results, materialize_segments
 from fsp.core.text import clean_text
 from fsp.utils.logging import sanitize_captured_output, write_captured_output
 from fsp.utils.language import choose_language, choose_language_from_predictions, predict_languages
@@ -79,7 +80,7 @@ CTC_MODELS = {
 
 LEGACY_KEYS = {"pred_text", "cer_score"}
 MIN_SEGMENT_LANGUAGE_CONFIDENCE = 0.30
-DEFAULT_ASR_BATCH_SIZE = 8
+DEFAULT_ASR_BATCH_SIZE = 16
 SUPPORTED_SEGMENT_LANGS = ("ca", "es", "eu", "gl")
 
 
@@ -98,6 +99,7 @@ class BatchItemState:
     buckets: Dict[str, List[Dict[str, Any]]] = field(
         default_factory=lambda: {seg_lang: [] for seg_lang in SUPPORTED_SEGMENT_LANGS}
     )
+    segment_sources: Dict[int, tuple[Path, str]] = field(default_factory=dict)
     started_at: float = field(default_factory=time.perf_counter)
 
 
@@ -167,6 +169,21 @@ def _persist_batch_item(state: BatchItemState, *, write_drop_log: bool = False) 
             len(state.dropped_segments),
             dropped_by_reason,
         )
+
+
+def _iter_results(combined: Mapping[str, Any]) -> Iterable[Dict[str, Any]]:
+    for payload in combined.values():
+        if isinstance(payload, Mapping):
+            for result in payload.get("results", []):
+                yield result
+
+
+def _rebuild_buckets(state: BatchItemState) -> None:
+    state.buckets = {seg_lang: [] for seg_lang in SUPPORTED_SEGMENT_LANGS}
+    for result in _iter_results(state.combined):
+        seg_lang = result.get("language")
+        if seg_lang in state.buckets:
+            state.buckets[seg_lang].append(result)
 
 
 def _clean_alignment_text(text: str, lang: str) -> str:
@@ -408,15 +425,11 @@ def _segment_and_bucket_input(
     state: BatchItemState,
     *,
     lid_model: "fasttext.FastText._FastText",
-    primary_asr: Any,
     aligner_model_arg: str,
     align_device: str,
     min_language_confidence: float,
 ) -> None:
     from fsp.core.segmenter import Segmenter
-
-    ca_asr = primary_asr if state.lang == "ca" else None
-    es_asr = primary_asr if state.lang == "es" else None
 
     meta_path = state.norm_root / f"{state.input_id}_metadata.json"
     if not meta_path.is_file():
@@ -453,9 +466,6 @@ def _segment_and_bucket_input(
             str(ctm_file),
             str(wav_src),
             str(state.out_seg_dir),
-            lid_model,
-            ca_asr,
-            es_asr,
             drop_callback=state.dropped_segments.append,
         )
         results = seg.segment_audio()
@@ -553,13 +563,8 @@ def _segment_and_bucket_input(
 
             result["language"] = detected_lang
             result["language_confidence"] = round(conf, 2)
-            if detected_lang in ("ca", "es") and "pred_text" in result:
-                result["pred_text_segmenter"] = result.pop("pred_text")
-                result.pop("cer_score", None)
-            else:
-                result.pop("pred_text", None)
-                result.pop("cer_score", None)
             state.buckets[detected_lang].append(result)
+            state.segment_sources[id(result)] = (wav_src, result.pop("segment_base_name"))
             kept_results.append(result)
 
         state.combined[block_id] = {
@@ -636,6 +641,36 @@ def _run_model_sweeps(
                 unload_model(model)
 
 
+def _apply_pre_materialization_duration_filter(
+    state: BatchItemState,
+    *,
+    min_duration: float,
+    max_duration: float,
+) -> tuple[int, dict[str, int]]:
+    def _record_drop(payload: dict[str, Any]) -> None:
+        payload.setdefault("block_id", state.input_id)
+        payload.setdefault("expected_language", state.lang)
+        state.dropped_segments.append(payload)
+
+    dropped_count, dropped_reasons = filter_segment_results(
+        state.combined,
+        min_dur=min_duration,
+        max_dur=max_duration,
+        cleanup_files=False,
+        drop_callback=_record_drop,
+    )
+    _rebuild_buckets(state)
+    return dropped_count, dropped_reasons
+
+
+def _materialize_state_segments(state: BatchItemState) -> int:
+    segments = list(_iter_results(state.combined))
+    if not segments:
+        return 0
+    materialized = materialize_segments(segments, state.segment_sources, state.out_seg_dir)
+    return materialized
+
+
 def generate_final_data_batch(
     input_ids: List[str],
     *,
@@ -646,6 +681,8 @@ def generate_final_data_batch(
     hf_model_dir: str | Path | None = None,
     min_language_confidence: float = MIN_SEGMENT_LANGUAGE_CONFIDENCE,
     asr_batch_size: int = DEFAULT_ASR_BATCH_SIZE,
+    min_duration: float = 2,
+    max_duration: float = 30,
     output_names: Mapping[str, str] | None = None,
     run_log_dirs: Mapping[str, Path | None] | None = None,
 ) -> Dict[str, Path]:
@@ -689,17 +726,24 @@ def generate_final_data_batch(
                 _segment_and_bucket_input(
                     state,
                     lid_model=lid_model,
-                    primary_asr=primary_asr,
                     aligner_model_arg=aligner_model_arg,
                     align_device=align_device,
                     min_language_confidence=min_language_confidence,
                 )
+                duration_dropped, duration_reasons = _apply_pre_materialization_duration_filter(
+                    state,
+                    min_duration=min_duration,
+                    max_duration=max_duration,
+                )
+                materialized_count = _materialize_state_segments(state)
                 _persist_batch_item(state, write_drop_log=True)
                 logger.info(
-                    "Step 3/7 segmentation completed input_id={} kept_segments={} dropped_segments={}",
+                    "Step 3/7 segmentation completed input_id={} kept_segments={} dropped_segments={} materialized_segments={} duration_dropped_reasons={}",
                     input_id,
                     sum(len(payload["results"]) for payload in state.combined.values()),
                     len(state.dropped_segments),
+                    materialized_count,
+                    duration_reasons if duration_dropped else {},
                 )
             except Exception as err:
                 logger.error("Step 3/7 generate_final_data failed input_id={} error={}", input_id, err)
@@ -739,6 +783,8 @@ def generate_final_data(
     hf_model_dir: str | Path | None = None,
     min_language_confidence: float = MIN_SEGMENT_LANGUAGE_CONFIDENCE,
     asr_batch_size: int = DEFAULT_ASR_BATCH_SIZE,
+    min_duration: float = 2,
+    max_duration: float = 30,
     run_log_dir: Path | None = None,
 ) -> Path:
     """Generate word-level aligned JSON with ASR enrichment."""
@@ -751,6 +797,8 @@ def generate_final_data(
         hf_model_dir=hf_model_dir,
         min_language_confidence=min_language_confidence,
         asr_batch_size=asr_batch_size,
+        min_duration=min_duration,
+        max_duration=max_duration,
         output_names={input_id: output_name} if output_name else None,
         run_log_dirs={input_id: run_log_dir},
     )[input_id]

@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--asr-batch-size",
         type=int,
-        default=8,
+        default=16,
         help="Batch size for segment-level ASR inference",
     )
     parser.add_argument(
