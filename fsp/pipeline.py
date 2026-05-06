@@ -12,7 +12,7 @@ import pandas as pd
 import torch
 from loguru import logger
 
-from fsp.core.alignment import generate_final_data
+from fsp.core.alignment import generate_final_data, generate_final_data_batch
 from fsp.core.audio import filter_and_cleanup
 from fsp.core.audio import normalize_audio as _normalize_audio
 from fsp.core.punctuation import process_file as punctuate_file
@@ -398,15 +398,86 @@ class Pipeline:
         if input_ids is None:
             input_ids = self.find_valid_input_ids()
 
-        results = []
+        prepared_ids: List[str] = []
+        output_names: dict[str, str] = {}
+        run_log_dirs: dict[str, Path] = {}
+
         for i, input_id in enumerate(input_ids, 1):
-            logger.info("Batch item {}/{} started input_id={}", i, len(input_ids), input_id)
+            logger.info("Batch item {}/{} preparation started input_id={}", i, len(input_ids), input_id)
+            raw_tsv = INGESTION_DIR / f"{input_id}.tsv"
+            raw_wav = INGESTION_DIR / f"{input_id}.wav"
+            run_log_dir = self.run_log_dir or build_run_log_dir(build_run_label(self.run_label, input_id, self.lang))
+            out_json_name = f"final_output_{input_id}.json"
 
             try:
-                result = self.run_all(input_id)
-                results.append(result)
-            except Exception as e:
-                logger.error("Batch item failed input_id={} error={}", input_id, e)
+                if not raw_tsv.exists() or not raw_wav.exists():
+                    raise RuntimeError(f"Missing pair for input ID: {input_id}")
+
+                logger.info("Step 1/7 normalize_tsv started input_id={} lang={}", input_id, self.lang)
+                self.normalize_tsv(raw_tsv, self.lang, "|")
+                logger.info("Step 1/7 normalize_tsv completed input_id={}", input_id)
+
+                logger.info("Step 2/7 normalize_audio started input_id={}", input_id)
+                self.normalize_audio(input_id)
+                logger.info("Step 2/7 normalize_audio completed input_id={}", input_id)
+            except Exception as err:
+                logger.error("Batch item failed input_id={} error={}", input_id, err)
+                logger.warning("Skipping input_id={}", input_id)
+                continue
+
+            prepared_ids.append(input_id)
+            output_names[input_id] = out_json_name
+            run_log_dirs[input_id] = run_log_dir
+
+        if not prepared_ids:
+            return []
+
+        logger.info("Batch phase started: generate_final_data inputs={}", len(prepared_ids))
+        generated_outputs: dict[str, Path] = {}
+        try:
+            generated_outputs = generate_final_data_batch(
+                prepared_ids,
+                lang=self.lang,
+                device=self.device,
+                lid_model_path=self.lid_model_path,
+                nemo_model_dir=self.nemo_model_dir,
+                hf_model_dir=self.hf_model_dir,
+                asr_batch_size=self.asr_batch_size,
+                output_names=output_names,
+                run_log_dirs=run_log_dirs,
+            )
+        except Exception as err:
+            logger.error("Batch generate_final_data phase failed error={}", err)
+            raise
+
+        results = []
+        for input_id in prepared_ids:
+            out_json_path = generated_outputs.get(input_id)
+            if out_json_path is None:
+                logger.warning("Skipping input_id={} because generate_final_data produced no output", input_id)
+                continue
+
+            logger.info("Step 3/7 generate_final_data completed input_id={}", input_id)
+            try:
+                self.maybe_run_gl_extra_asr(out_json_path, run_log_dir=run_log_dirs[input_id])
+
+                logger.info("Step 5/7 duration_filter started input_id={}", input_id)
+                self.duration_filter(out_json_path)
+                logger.info("Step 5/7 duration_filter completed input_id={}", input_id)
+
+                logger.info("Step 6/7 rover_merge started input_id={}", input_id)
+                self.rover_merge(out_json_path)
+                logger.info("Step 6/7 rover_merge completed input_id={}", input_id)
+
+                rover_json = ROVER_DIR / output_names[input_id]
+
+                logger.info("Step 7/7 punctuation started input_id={}", input_id)
+                self.punctuate(rover_json)
+                logger.info("Step 7/7 punctuation completed input_id={} output={}", input_id, rover_json)
+
+                results.append(rover_json)
+            except Exception as err:
+                logger.error("Batch item failed input_id={} error={}", input_id, err)
                 logger.warning("Skipping input_id={}", input_id)
 
         return results
