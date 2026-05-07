@@ -50,7 +50,7 @@ Each `.tsv` must contain **exactly one line** in this format:
 ### Step 1. Build the Docker image
 
 ```bash
-docker build -t fsp-pipeline -f Dockerfile .
+./deployment/build/build_docker.sh
 ```
 
 ### Step 2. Download models (once, on host)
@@ -114,7 +114,7 @@ docker run --rm --user $(id -u):$(id -g) \
 
 If your models live outside the repository, pass the explicit runtime paths:
 `--lid-model-path /path/to/fasttext/lid.176.bin`, `--nemo-model-dir /path/to/model-root`, and
-`--hf-model-dir /path/to/model-root`. For `run_singularity_image.sh`, set
+`--hf-model-dir /path/to/model-root`. For `deployment/run/run_singularity_image.sh`, set
 `LID_MODEL_PATH`, `NEMO_MODEL_DIR`, and `HF_MODEL_DIR` before invoking the wrapper.
 
 ### Step 4. Run fully offline (optional)
@@ -144,7 +144,7 @@ For HPC clusters or restricted environments where Docker is not available, you c
 ### Build the `.sif` image
 
 ```bash
-./build/build_singularity.sh
+./deployment/build/build_singularity.sh
 ```
 
 This creates `fsp-pipeline.sif` in the repo root (~3–4 GB). Takes ~5–10 minutes.
@@ -153,19 +153,19 @@ This creates `fsp-pipeline.sif` in the repo root (~3–4 GB). Takes ~5–10 minu
 
 ```bash
 # Single recording, using the code baked into the image
-./run_singularity_image.sh --input-id my_recording --lang es
+./deployment/run/run_singularity_image.sh --input-id my_recording --lang es
 
 # Batch from file (one ID per line, e.g. from create_splits.sh)
-./run_singularity_image.sh --input-id-file /path/to/ids.txt --lang es
+./deployment/run/run_singularity_image.sh --input-id-file /path/to/ids.txt --lang es
 
 # Batch mode (all pairs in ingestion/)
-./run_singularity_image.sh --lang es
+./deployment/run/run_singularity_image.sh --lang es
 
 # Test local repo changes without rebuilding the image
-./run_singularity_image.sh --code-source repo --input-id my_recording --lang es
+./deployment/run/run_singularity_image.sh --code-source repo --input-id my_recording --lang es
 ```
 
-The `run_singularity_image.sh` wrapper binds `ingestion/`, `inputs/`, `merged/`,
+The `deployment/run/run_singularity_image.sh` wrapper binds `ingestion/`, `inputs/`, `merged/`,
 and the shared model root into the container. With `--code-source repo`, it also
 overlays the current checkout's `fsp/`, `NeMo/`, `steps/`, `scripts/`, and
 `pipeline_service.py` so local unbaked changes can be tested immediately.
@@ -310,12 +310,24 @@ inputs/
 │   └── rover_merge.py          # Multi-hypothesis merging
 ├── steps/
 │   └── generate_final_data.py  # Forced alignment + segmentation + ASR
-├── pipeline_service.py         # Main orchestrator
-├── Dockerfile                  # Docker image definition
-├── build/
-│   ├── build_singularity.sh    # Docker → Singularity converter
-│   └── build_gl_extra_asr.sh   # GL extra ASR sidecar image builder
-└── run_singularity_image.sh    # Singularity run wrapper
+├── deployment/
+│   ├── README.md               # Deployment asset overview
+│   ├── containers/
+│   │   ├── README.md           # Container layout notes
+│   │   ├── docker/
+│   │   │   ├── Dockerfile      # Docker image definition
+│   │   │   └── .dockerignore   # Docker ignore rules for staged context
+│   │   └── apptainer/
+│   │       └── gl-extra-asr.def # GL extra ASR sidecar definition
+│   ├── build/
+│   │   ├── build_docker.sh     # Staged Docker builder
+│   │   ├── build_singularity.sh # Docker → Singularity converter
+│   │   └── build_gl_extra_asr.sh # GL extra ASR sidecar image builder
+│   └── run/
+│       ├── run_singularity_image.sh # Portable Singularity runner
+│       ├── run_pipeline_github.sh   # Portable SLURM wrapper
+│       └── create_splits_run_pipeline.sh # Portable split + submit helper
+└── pipeline_service.py         # Main orchestrator
 ```
 
 ---
@@ -429,7 +441,7 @@ To prevent this, always include `--user $(id -u):$(id -g)` in `docker run` comma
 
 **Singularity build fails with "no space left on device"**
 
-Apptainer uses `/tmp` for intermediate files. If your `/tmp` partition is small, `build/build_singularity.sh` 
+Apptainer uses `/tmp` for intermediate files. If your `/tmp` partition is small, `deployment/build/build_singularity.sh` 
 automatically redirects to `.apptainer_tmp/` in the project directory. If it still fails, 
 free up disk space or set `APPTAINER_TMPDIR` to a partition with ≥ 10 GB free.
 

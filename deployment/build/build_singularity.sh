@@ -5,15 +5,16 @@
 # Build a Singularity/Apptainer .sif image from the Docker image.
 #
 # Usage:
-#   ./build/build_singularity.sh                      # uses defaults
-#   ./build/build_singularity.sh --docker-tag my-tag   # custom Docker tag
-#   ./build/build_singularity.sh --sif my-output.sif   # custom .sif name
+#   ./deployment/build/build_docker.sh                           # build Docker image only
+#   ./deployment/build/build_singularity.sh                      # uses defaults
+#   ./deployment/build/build_singularity.sh --docker-tag my-tag   # custom Docker tag
+#   ./deployment/build/build_singularity.sh --sif my-output.sif   # custom .sif name
 # ===========================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DOCKER_TAG="${DOCKER_TAG:-fsp-pipeline}"
 SIF_NAME="${SIF_NAME:-fsp-pipeline.sif}"
 
@@ -62,7 +63,7 @@ echo "════════════════════════�
 if ! docker image inspect "${DOCKER_TAG}" &>/dev/null; then
     echo ""
     echo "► Docker image '${DOCKER_TAG}' not found. Building it first..."
-    docker build -t "${DOCKER_TAG}" -f "${REPO_ROOT}/Dockerfile" "${REPO_ROOT}"
+    "${REPO_ROOT}/deployment/build/build_docker.sh" --docker-tag "${DOCKER_TAG}"
 fi
 
 # Step 2: Convert Docker image → .sif
@@ -88,4 +89,4 @@ echo "✅ Singularity image created: ${SIF_NAME}"
 echo "   Size: $(du -h "${REPO_ROOT}/${SIF_NAME}" | cut -f1)"
 echo ""
 echo "Run it with:"
-echo "  ./run_singularity_image.sh --input-id <ID> --lang es"
+echo "  ./deployment/run/run_singularity_image.sh --input-id <ID> --lang es"

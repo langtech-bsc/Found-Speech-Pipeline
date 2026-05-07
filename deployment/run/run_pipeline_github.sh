@@ -15,8 +15,9 @@ set -euo pipefail
 # Add site-specific directives such as --account/--qos locally if your cluster requires them.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${SCRIPT_DIR}"
-mkdir -p slurm_output
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${REPO_ROOT}"
+mkdir -p "${REPO_ROOT}/slurm_output"
 
 # Allow callers to point at a specific interpreter/environment.
 if [[ -n "${PYTHON:-}" ]]; then
@@ -74,4 +75,4 @@ echo "  Models: ${MODELS_ROOT:-<unset>}"
 echo "  LID: ${LID_MODEL_PATH:-<unset>}"
 echo "════════════════════════════════════════════════════"
 
-"${PYTHON}" pipeline_service.py "${PIPELINE_ARGS[@]}"
+"${PYTHON}" "${REPO_ROOT}/pipeline_service.py" "${PIPELINE_ARGS[@]}"

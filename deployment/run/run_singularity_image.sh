@@ -8,9 +8,9 @@ set -euo pipefail
 # current checkout for quick local testing.
 #
 # Examples:
-#   ./run_singularity_image.sh --input-id PKuuatqwz00 --lang es
-#   ./run_singularity_image.sh --code-source repo --input-id PKuuatqwz00 --lang es
-#   ./run_singularity_image.sh --lang ca
+#   ./deployment/run/run_singularity_image.sh --input-id PKuuatqwz00 --lang es
+#   ./deployment/run/run_singularity_image.sh --code-source repo --input-id PKuuatqwz00 --lang es
+#   ./deployment/run/run_singularity_image.sh --lang ca
 #
 # Optional environment overrides:
 #   export FSP_INGESTION_DIR=/path/to/ingestion
@@ -22,7 +22,8 @@ set -euo pipefail
 # ===========================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SIF="${SCRIPT_DIR}/fsp-pipeline.sif"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SIF="${REPO_ROOT}/fsp-pipeline.sif"
 DEFAULT_MODELS_ROOT="/gpfs/projects/bsc88/speech/ASR/models"
 CODE_SOURCE="image"
 PIPELINE_ARGS=()
@@ -30,7 +31,7 @@ PIPELINE_ARGS=()
 print_help() {
     cat <<'EOF'
 Usage:
-  ./run_singularity_image.sh [--code-source image|repo] [pipeline args]
+  ./deployment/run/run_singularity_image.sh [--code-source image|repo] [pipeline args]
 
 Modes:
   --code-source image   Run the code baked into the .sif image (default)
@@ -38,8 +39,8 @@ Modes:
                         local repo changes can be tested without rebuilding
 
 Examples:
-  ./run_singularity_image.sh --input-id my_recording --lang es
-  ./run_singularity_image.sh --code-source repo --input-id my_recording --lang es
+  ./deployment/run/run_singularity_image.sh --input-id my_recording --lang es
+  ./deployment/run/run_singularity_image.sh --code-source repo --input-id my_recording --lang es
 EOF
 }
 
@@ -80,9 +81,9 @@ if [[ ! -f "${SIF}" ]]; then
     exit 1
 fi
 
-INGESTION_DIR="${FSP_INGESTION_DIR:-${SCRIPT_DIR}/ingestion}"
-INPUTS_DIR="${FSP_INPUTS_DIR:-${SCRIPT_DIR}/inputs}"
-MERGED_DIR="${FSP_MERGED_DIR:-${SCRIPT_DIR}/merged}"
+INGESTION_DIR="${FSP_INGESTION_DIR:-${REPO_ROOT}/ingestion}"
+INPUTS_DIR="${FSP_INPUTS_DIR:-${REPO_ROOT}/inputs}"
+MERGED_DIR="${FSP_MERGED_DIR:-${REPO_ROOT}/merged}"
 
 MODELS_ROOT_HOST="${MODELS_ROOT:-${DEFAULT_MODELS_ROOT}}"
 MODEL_ROOT_HOST="${MODEL_DIR:-${MODELS_ROOT_HOST}}"
@@ -159,11 +160,11 @@ fi
 CODE_BINDS=()
 if [[ "${CODE_SOURCE}" == "repo" ]]; then
     CODE_BINDS=(
-        --bind "${SCRIPT_DIR}/fsp:/app/fsp:ro"
-        --bind "${SCRIPT_DIR}/NeMo:/app/NeMo:ro"
-        --bind "${SCRIPT_DIR}/steps:/app/steps:ro"
-        --bind "${SCRIPT_DIR}/scripts:/app/scripts:ro"
-        --bind "${SCRIPT_DIR}/pipeline_service.py:/app/pipeline_service.py:ro"
+        --bind "${REPO_ROOT}/fsp:/app/fsp:ro"
+        --bind "${REPO_ROOT}/NeMo:/app/NeMo:ro"
+        --bind "${REPO_ROOT}/steps:/app/steps:ro"
+        --bind "${REPO_ROOT}/scripts:/app/scripts:ro"
+        --bind "${REPO_ROOT}/pipeline_service.py:/app/pipeline_service.py:ro"
     )
 fi
 

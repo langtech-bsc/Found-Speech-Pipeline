@@ -31,15 +31,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DEFAULT_SIF="/gpfs/projects/bsc88/singularity-images/fsp-pipeline.sif"
 
-if [[ -f "${SCRIPT_DIR}/.env" ]]; then
+if [[ -f "${REPO_ROOT}/.env" ]]; then
     # Allow local HPC overrides such as SIF=/path/to/image.sif.
-    source "${SCRIPT_DIR}/.env"
+    source "${REPO_ROOT}/.env"
 fi
 
 SIF_PATH="${SIF:-${DEFAULT_SIF}}"
-cd "${SCRIPT_DIR}"
+cd "${REPO_ROOT}"
 
 num_buckets=""
 output_dir=""
@@ -76,8 +77,8 @@ else
 fi
 
 singularity exec --no-home \
-    --bind "${SCRIPT_DIR}:${SCRIPT_DIR}" \
-    --pwd "${SCRIPT_DIR}" \
+    --bind "${REPO_ROOT}:${REPO_ROOT}" \
+    --pwd "${REPO_ROOT}" \
     "${SIF_PATH}" \
     python scripts/split.py "${input_dir}" -n "${num_buckets}" -o "${output_dir}"
 
@@ -86,6 +87,6 @@ echo ""
 for file in "${output_dir}"/*; do
     if [ -f "$file" ]; then
         echo "Running pipeline with input id file: $file";
-        sbatch ./run_pipeline_github.sh --input-id-file "${file}" --lang "${lang}"
+        sbatch "${SCRIPT_DIR}/run_pipeline_github.sh" --input-id-file "${file}" --lang "${lang}"
     fi
 done
