@@ -5,7 +5,9 @@ __pycache__/
 *.so
 .Python
 env/
-build/
+build/*
+!build/
+!build/*.sh
 develop-eggs/
 dist/
 downloads/
@@ -29,18 +31,17 @@ ENV/
 # Project specific
 *.sif
 model_cache/
+.env
+.pytest_cache/
+slurm_output/
+backups/
+input_ids*/
 ingestion/
+ingestion_*/
 inputs/
-inputs/manifest/
-inputs/normalized/
-inputs/output.log
-inputs/output_segment/
-inputs/wordlevel_alignment/
 merged/
+runs/
+test_runs/
 untracked_backups/
 *root_owned_backup/
-.dockerignore
-build_singularity.sh
-run_singularity.sh
 utils/models/
-scripts/fetch_transcript.py

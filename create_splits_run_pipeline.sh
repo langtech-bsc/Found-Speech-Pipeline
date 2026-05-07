@@ -22,7 +22,7 @@
 # DEPENDENCIES:
 #   - Singularity (module load singularity)
 #   - Python script: scripts/split.py
-#   - Singularity image: /gpfs/projects/bsc88/singularity-images/fsp-pipeline.sif
+#   - Singularity image for both the split step and downstream sbatch jobs
 #
 # NOTES:
 #   - Output directory will be created if it doesn't exist
@@ -39,6 +39,7 @@ if [[ -f "${SCRIPT_DIR}/.env" ]]; then
 fi
 
 SIF_PATH="${SIF:-${DEFAULT_SIF}}"
+cd "${SCRIPT_DIR}"
 
 num_buckets=""
 output_dir=""
@@ -74,13 +75,17 @@ else
     echo "Using existing output directory '${output_dir}'"
 fi
 
-singularity exec --no-home "${SIF_PATH}" python "${SCRIPT_DIR}/scripts/split.py" "${input_dir}" -n "${num_buckets}" -o "${output_dir}"
+singularity exec --no-home \
+    --bind "${SCRIPT_DIR}:${SCRIPT_DIR}" \
+    --pwd "${SCRIPT_DIR}" \
+    "${SIF_PATH}" \
+    python scripts/split.py "${input_dir}" -n "${num_buckets}" -o "${output_dir}"
 
 echo ""
 
 for file in "${output_dir}"/*; do
     if [ -f "$file" ]; then
         echo "Running pipeline with input id file: $file";
-        sbatch "${SCRIPT_DIR}/run_singularity.sh" --input-id-file "${file}" --lang "${lang}"
+        sbatch ./run_pipeline_github.sh --input-id-file "${file}" --lang "${lang}"
     fi
 done

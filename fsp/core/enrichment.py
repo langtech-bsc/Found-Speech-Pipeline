@@ -10,7 +10,7 @@ import logging
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import librosa
 import torch
@@ -25,6 +25,7 @@ from transformers import (
 from fsp.utils.paths import ROOT, resolve_hf_model_dir
 
 LOG = logging.getLogger("hf_enrich")
+DEFAULT_PIPELINE_BATCH_SIZE = 8
 
 
 def normalize_text_for_enrichment(text: str, lang: str) -> str:
@@ -166,6 +167,27 @@ def transcribe_whisper_seq2seq(model: dict[str, Any], audio_path: Path, lang: st
     return str(out).strip()
 
 
+def transcribe_whisper_seq2seq_batch(
+    model: dict[str, Any],
+    audio_paths: Iterable[Path],
+    lang: str,
+    batch_size: int = DEFAULT_PIPELINE_BATCH_SIZE,
+) -> list[str]:
+    outputs = model["pipe"](
+        [str(audio_path) for audio_path in audio_paths],
+        return_timestamps=True,
+        batch_size=batch_size,
+        generate_kwargs={"task": "transcribe", "language": lang},
+    )
+    transcriptions: list[str] = []
+    for out in outputs:
+        if isinstance(out, dict):
+            transcriptions.append(str(out.get("text", "")).strip())
+        else:
+            transcriptions.append(str(out).strip())
+    return transcriptions
+
+
 def load_wav2vec2_bert_ctc(repo_path: Path, device: str) -> Any:
     processor = AutoProcessor.from_pretrained(repo_path, local_files_only=True)
     dtype = torch.float16 if device == "cuda" else torch.float32
@@ -267,7 +289,11 @@ def enrich_json(
     overwrite_existing: bool,
     limit: int | None,
     hf_model_dir: str | Path | None = None,
+    pipeline_batch_size: int = DEFAULT_PIPELINE_BATCH_SIZE,
 ) -> None:
+    if pipeline_batch_size < 1:
+        raise ValueError("pipeline_batch_size must be >= 1")
+
     data = json.loads(input_json.read_text(encoding="utf-8"))
     segments = iter_segments(data, set(langs))
     if limit is not None:
@@ -288,6 +314,55 @@ def enrich_json(
             LOG.info("Loading %s from %s", spec.name, repo_path)
             model = LOADERS[spec.kind](repo_path, device)
             transcriber = TRANSCRIBERS[spec.kind]
+
+            if spec.kind == "whisper_seq2seq":
+                pending_segments: list[tuple[dict[str, Any], Path]] = []
+                for segment in segments:
+                    if segment.get("language") != spec.language:
+                        continue
+                    if should_skip_segment(segment, spec, overwrite_existing):
+                        continue
+
+                    audio_path = resolve_audio_path(segment["segment_path"], input_json)
+                    pred_key = f"pred_text_{spec.name}"
+                    norm_key = f"norm_text_{spec.name}"
+                    if not audio_path.exists():
+                        LOG.warning("Missing segment audio for %s: %s", spec.name, audio_path)
+                        segment[pred_key] = ""
+                        segment[norm_key] = ""
+                        continue
+                    pending_segments.append((segment, audio_path))
+
+                for start in range(0, len(pending_segments), pipeline_batch_size):
+                    batch = pending_segments[start : start + pipeline_batch_size]
+                    batch_segments = [segment for segment, _audio_path in batch]
+                    batch_audio_paths = [audio_path for _segment, audio_path in batch]
+                    try:
+                        transcriptions = transcribe_whisper_seq2seq_batch(
+                            model,
+                            batch_audio_paths,
+                            spec.language,
+                            batch_size=pipeline_batch_size,
+                        )
+                        for segment, transcription in zip(batch_segments, transcriptions, strict=True):
+                            pred_key = f"pred_text_{spec.name}"
+                            norm_key = f"norm_text_{spec.name}"
+                            segment[pred_key] = transcription
+                            segment[norm_key] = normalize_text_for_enrichment(transcription, spec.language)
+                    except Exception as err:  # noqa: BLE001
+                        LOG.warning("%s batch failed on %s items: %s", spec.name, len(batch_audio_paths), err)
+                        for segment, audio_path in batch:
+                            pred_key = f"pred_text_{spec.name}"
+                            norm_key = f"norm_text_{spec.name}"
+                            try:
+                                transcription = transcriber(model, audio_path, spec.language)
+                                segment[pred_key] = transcription
+                                segment[norm_key] = normalize_text_for_enrichment(transcription, spec.language)
+                            except Exception as item_err:  # noqa: BLE001
+                                LOG.warning("%s failed on %s: %s", spec.name, audio_path, item_err)
+                                segment[pred_key] = ""
+                                segment[norm_key] = ""
+                continue
 
             for segment in segments:
                 if segment.get("language") != spec.language:

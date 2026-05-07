@@ -15,6 +15,7 @@
 import copy
 import math
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass, field, is_dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -40,6 +41,16 @@ from nemo.collections.asr.parts.utils.streaming_utils import FrameBatchASR
 from nemo.collections.asr.parts.utils.transcribe_utils import setup_model
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
+
+@contextmanager
+def suppress_nemo_model_setup_warnings():
+    original_verbosity = logging.get_verbosity()
+    try:
+        logging.set_verbosity(logging.ERROR)
+        yield
+    finally:
+        logging.set_verbosity(original_verbosity)
+
 
 """
 Align the utterances in manifest_filepath. 
@@ -240,7 +251,8 @@ def main(cfg: AlignmentConfig):
         )
 
     # load model
-    model, _ = setup_model(cfg, transcribe_device)
+    with suppress_nemo_model_setup_warnings():
+        model, _ = setup_model(cfg, transcribe_device)
     model.eval()
 
     if isinstance(model, EncDecHybridRNNTCTCModel):

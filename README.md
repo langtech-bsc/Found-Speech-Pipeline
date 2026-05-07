@@ -114,7 +114,7 @@ docker run --rm --user $(id -u):$(id -g) \
 
 If your models live outside the repository, pass the explicit runtime paths:
 `--lid-model-path /path/to/fasttext/lid.176.bin`, `--nemo-model-dir /path/to/model-root`, and
-`--hf-model-dir /path/to/model-root`. For `run_singularity.sh`, set
+`--hf-model-dir /path/to/model-root`. For `run_singularity_image.sh`, set
 `LID_MODEL_PATH`, `NEMO_MODEL_DIR`, and `HF_MODEL_DIR` before invoking the wrapper.
 
 ### Step 4. Run fully offline (optional)
@@ -144,27 +144,31 @@ For HPC clusters or restricted environments where Docker is not available, you c
 ### Build the `.sif` image
 
 ```bash
-./build_singularity.sh
+./build/build_singularity.sh
 ```
 
-This creates `fsp-pipeline.sif` (~3–4 GB) from the Docker image. Takes ~5–10 minutes.
+This creates `fsp-pipeline.sif` in the repo root (~3–4 GB). Takes ~5–10 minutes.
 
 ### Run with Singularity
 
 ```bash
-# Single recording
-./run_singularity.sh --input-id my_recording --lang es
+# Single recording, using the code baked into the image
+./run_singularity_image.sh --input-id my_recording --lang es
 
 # Batch from file (one ID per line, e.g. from create_splits.sh)
-./run_singularity.sh --input-id-file /path/to/ids.txt --lang es
+./run_singularity_image.sh --input-id-file /path/to/ids.txt --lang es
 
 # Batch mode (all pairs in ingestion/)
-./run_singularity.sh --lang es
+./run_singularity_image.sh --lang es
+
+# Test local repo changes without rebuilding the image
+./run_singularity_image.sh --code-source repo --input-id my_recording --lang es
 ```
 
-The `run_singularity.sh` wrapper automatically binds `ingestion/`, `inputs/`, `merged/`,
-`${LID_MODEL_PATH:-$MODELS_ROOT/fasttext/lid.176.bin}`, `${NEMO_MODEL_DIR:-$MODELS_ROOT}`,
-and `${HF_MODEL_DIR:-$MODELS_ROOT}` into the container.
+The `run_singularity_image.sh` wrapper binds `ingestion/`, `inputs/`, `merged/`,
+and the shared model root into the container. With `--code-source repo`, it also
+overlays the current checkout's `fsp/`, `NeMo/`, `steps/`, `scripts/`, and
+`pipeline_service.py` so local unbaked changes can be tested immediately.
 
 ---
 
@@ -308,8 +312,10 @@ inputs/
 │   └── generate_final_data.py  # Forced alignment + segmentation + ASR
 ├── pipeline_service.py         # Main orchestrator
 ├── Dockerfile                  # Docker image definition
-├── build_singularity.sh        # Docker → Singularity converter
-└── run_singularity.sh          # Singularity run wrapper
+├── build/
+│   ├── build_singularity.sh    # Docker → Singularity converter
+│   └── build_gl_extra_asr.sh   # GL extra ASR sidecar image builder
+└── run_singularity_image.sh    # Singularity run wrapper
 ```
 
 ---
@@ -423,7 +429,7 @@ To prevent this, always include `--user $(id -u):$(id -g)` in `docker run` comma
 
 **Singularity build fails with "no space left on device"**
 
-Apptainer uses `/tmp` for intermediate files. If your `/tmp` partition is small, `build_singularity.sh` 
+Apptainer uses `/tmp` for intermediate files. If your `/tmp` partition is small, `build/build_singularity.sh` 
 automatically redirects to `.apptainer_tmp/` in the project directory. If it still fails, 
 free up disk space or set `APPTAINER_TMPDIR` to a partition with ≥ 10 GB free.
 

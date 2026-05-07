@@ -5,13 +5,15 @@
 # Build a Singularity/Apptainer .sif image from the Docker image.
 #
 # Usage:
-#   ./build_singularity.sh                      # uses defaults
-#   ./build_singularity.sh --docker-tag my-tag   # custom Docker tag
-#   ./build_singularity.sh --sif my-output.sif   # custom .sif name
+#   ./build/build_singularity.sh                      # uses defaults
+#   ./build/build_singularity.sh --docker-tag my-tag   # custom Docker tag
+#   ./build/build_singularity.sh --sif my-output.sif   # custom .sif name
 # ===========================================================================
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOCKER_TAG="${DOCKER_TAG:-fsp-pipeline}"
 SIF_NAME="${SIF_NAME:-fsp-pipeline.sif}"
 
@@ -60,12 +62,12 @@ echo "════════════════════════�
 if ! docker image inspect "${DOCKER_TAG}" &>/dev/null; then
     echo ""
     echo "► Docker image '${DOCKER_TAG}' not found. Building it first..."
-    docker build -t "${DOCKER_TAG}" -f Dockerfile .
+    docker build -t "${DOCKER_TAG}" -f "${REPO_ROOT}/Dockerfile" "${REPO_ROOT}"
 fi
 
 # Step 2: Convert Docker image → .sif
 # Use a temp dir on the same filesystem as the output (avoids /tmp running out of space)
-TMPDIR_BUILD="$(pwd)/.apptainer_tmp"
+TMPDIR_BUILD="${REPO_ROOT}/.apptainer_tmp"
 mkdir -p "${TMPDIR_BUILD}"
 export APPTAINER_TMPDIR="${TMPDIR_BUILD}"
 export SINGULARITY_TMPDIR="${TMPDIR_BUILD}"
@@ -76,14 +78,14 @@ echo "  (This may take several minutes depending on image size)"
 echo "  Temp dir: ${TMPDIR_BUILD}"
 echo ""
 
-${BUILDER} build "${SIF_NAME}" "docker-daemon://${DOCKER_TAG}:latest"
+"${BUILDER}" build "${REPO_ROOT}/${SIF_NAME}" "docker-daemon://${DOCKER_TAG}:latest"
 
 # Clean up temp dir
 rm -rf "${TMPDIR_BUILD}"
 
 echo ""
 echo "✅ Singularity image created: ${SIF_NAME}"
-echo "   Size: $(du -h "${SIF_NAME}" | cut -f1)"
+echo "   Size: $(du -h "${REPO_ROOT}/${SIF_NAME}" | cut -f1)"
 echo ""
 echo "Run it with:"
-echo "  ./run_singularity.sh --input-id <ID> --lang es"
+echo "  ./run_singularity_image.sh --input-id <ID> --lang es"

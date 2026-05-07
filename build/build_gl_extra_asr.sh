@@ -2,8 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DEF_FILE="${DEF_FILE:-${SCRIPT_DIR}/containers/gl-extra-asr.def}"
-SIF_NAME="${SIF_NAME:-${SCRIPT_DIR}/fsp-gl-extra-asr.sif}"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DEF_FILE="${DEF_FILE:-${REPO_ROOT}/containers/gl-extra-asr.def}"
+SIF_NAME="${SIF_NAME:-${REPO_ROOT}/fsp-gl-extra-asr.sif}"
 TMPDIR_BUILD="${TMPDIR_BUILD:-/tmp/apptainer_tmp_gl_extra_asr}"
 CACHE_DIR_BUILD="${CACHE_DIR_BUILD:-/tmp/apptainer_cache_gl_extra_asr}"
 

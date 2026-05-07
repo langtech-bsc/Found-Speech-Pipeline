@@ -32,11 +32,41 @@ export LID_MODEL_PATH="${LID_MODEL_PATH:-${MODELS_ROOT:+${MODELS_ROOT}/fasttext/
 export NEMO_MODEL_DIR="${NEMO_MODEL_DIR:-${MODELS_ROOT}}"
 export HF_MODEL_DIR="${HF_MODEL_DIR:-${MODELS_ROOT}}"
 
-INPUT_ID="${1:-dtTCbYIHLps}"
-LANG="${2:-eu}"
+PIPELINE_ARGS=()
+JOB_TARGET=""
+JOB_LANG=""
+
+if [[ $# -gt 0 && "$1" == --* ]]; then
+  PIPELINE_ARGS=("$@")
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --input-id)
+        JOB_TARGET="${2:-}"
+        shift 2
+        ;;
+      --input-id-file)
+        JOB_TARGET="${2:-}"
+        shift 2
+        ;;
+      --lang)
+        JOB_LANG="${2:-}"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+else
+  INPUT_ID="${1:-dtTCbYIHLps}"
+  LANG="${2:-eu}"
+  JOB_TARGET="$INPUT_ID"
+  JOB_LANG="$LANG"
+  PIPELINE_ARGS=(--input-id "$INPUT_ID" --lang "$LANG")
+fi
 
 echo "════════════════════════════════════════════════════"
-echo "  FSP Pipeline — ${INPUT_ID} [${LANG}]"
+echo "  FSP Pipeline — ${JOB_TARGET:-batch} [${JOB_LANG:-unspecified}]"
 echo "  Node: $(hostname)"
 echo "  Python: ${PYTHON}"
 echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'none detected')"
@@ -44,4 +74,4 @@ echo "  Models: ${MODELS_ROOT:-<unset>}"
 echo "  LID: ${LID_MODEL_PATH:-<unset>}"
 echo "════════════════════════════════════════════════════"
 
-"${PYTHON}" pipeline_service.py --input-id "$INPUT_ID" --lang "$LANG"
+"${PYTHON}" pipeline_service.py "${PIPELINE_ARGS[@]}"

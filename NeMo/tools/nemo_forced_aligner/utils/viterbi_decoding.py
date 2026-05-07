@@ -84,7 +84,8 @@ def viterbi_decoding(log_probs_batch, y_batch, T_batch, U_batch, viterbi_device)
             torch.arange(0, U_max, device=viterbi_device).unsqueeze(0) == (U_batch.unsqueeze(1) - 1),
         )
 
-        mask = torch.logical_not(torch.logical_and(t_exceeded_T_batch.unsqueeze(1), U_can_be_final,)).long()
+        t_exceeded_mask = t_exceeded_T_batch.reshape(B, 1).expand(-1, U_max)
+        mask = torch.logical_not(torch.logical_and(t_exceeded_mask, U_can_be_final)).long()
 
         e_current = e_current * mask
 

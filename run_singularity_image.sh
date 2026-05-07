@@ -4,10 +4,12 @@ set -euo pipefail
 # ===========================================================================
 # run_singularity_image.sh
 # Run the FSP pipeline inside a Singularity/Apptainer container on HPC,
-# using only the code baked into the .sif image.
+# either using only the code baked into the .sif image or overlaying the
+# current checkout for quick local testing.
 #
 # Examples:
 #   ./run_singularity_image.sh --input-id PKuuatqwz00 --lang es
+#   ./run_singularity_image.sh --code-source repo --input-id PKuuatqwz00 --lang es
 #   ./run_singularity_image.sh --lang ca
 #
 # Optional environment overrides:
@@ -22,6 +24,46 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SIF="${SCRIPT_DIR}/fsp-pipeline.sif"
 DEFAULT_MODELS_ROOT="/gpfs/projects/bsc88/speech/ASR/models"
+CODE_SOURCE="image"
+PIPELINE_ARGS=()
+
+print_help() {
+    cat <<'EOF'
+Usage:
+  ./run_singularity_image.sh [--code-source image|repo] [pipeline args]
+
+Modes:
+  --code-source image   Run the code baked into the .sif image (default)
+  --code-source repo    Overlay the current checkout into the container so
+                        local repo changes can be tested without rebuilding
+
+Examples:
+  ./run_singularity_image.sh --input-id my_recording --lang es
+  ./run_singularity_image.sh --code-source repo --input-id my_recording --lang es
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --code-source)
+            CODE_SOURCE="${2:-}"
+            shift 2
+            ;;
+        -h|--help)
+            print_help
+            exit 0
+            ;;
+        *)
+            PIPELINE_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ "${CODE_SOURCE}" != "image" && "${CODE_SOURCE}" != "repo" ]]; then
+    echo "ERROR: --code-source must be 'image' or 'repo'." >&2
+    exit 1
+fi
 
 if command -v apptainer >/dev/null 2>&1; then
     RUNNER=apptainer
@@ -114,9 +156,21 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     GPU_FLAG="--nv"
 fi
 
+CODE_BINDS=()
+if [[ "${CODE_SOURCE}" == "repo" ]]; then
+    CODE_BINDS=(
+        --bind "${SCRIPT_DIR}/fsp:/app/fsp:ro"
+        --bind "${SCRIPT_DIR}/NeMo:/app/NeMo:ro"
+        --bind "${SCRIPT_DIR}/steps:/app/steps:ro"
+        --bind "${SCRIPT_DIR}/scripts:/app/scripts:ro"
+        --bind "${SCRIPT_DIR}/pipeline_service.py:/app/pipeline_service.py:ro"
+    )
+fi
+
 echo "==========================================================="
-echo "Running FSP pipeline via ${RUNNER} (image-only code)"
+echo "Running FSP pipeline via ${RUNNER}"
 echo "Image:        ${SIF}"
+echo "Code source:  ${CODE_SOURCE}"
 echo "Ingestion:    ${INGESTION_DIR}"
 echo "Inputs:       ${INPUTS_DIR}"
 echo "Merged:       ${MERGED_DIR}"
@@ -125,7 +179,7 @@ echo "Model root:   ${MODEL_ROOT_HOST}"
 echo "HF cache:     ${HF_CACHE_DIR}"
 echo "Torch cache:  ${TORCH_CACHE_DIR}"
 echo "TMPDIR:       ${TMPDIR_HOST}"
-echo "Args:         ${*:-<batch mode>}"
+echo "Args:         ${PIPELINE_ARGS[*]:-<batch mode>}"
 echo "==========================================================="
 
 exec "${RUNNER}" exec ${GPU_FLAG} --cleanenv \
@@ -134,6 +188,7 @@ exec "${RUNNER}" exec ${GPU_FLAG} --cleanenv \
     --bind "${MERGED_DIR}:/app/merged" \
     --bind "${MODEL_ROOT_HOST}:/app/model_root:ro" \
     --bind "${TMPDIR_HOST}:/tmp" \
+    "${CODE_BINDS[@]}" \
     --env MODELS_ROOT=/app/model_root \
     --env MODEL_DIR=/app/model_root \
     --env LID_MODEL_PATH=/app/model_root/fasttext/lid.176.bin \
@@ -149,4 +204,4 @@ exec "${RUNNER}" exec ${GPU_FLAG} --cleanenv \
     --env MPLCONFIGDIR=/tmp/matplotlib \
     --env TMPDIR=/tmp \
     "${SIF}" \
-    python /app/pipeline_service.py "$@"
+    python /app/pipeline_service.py "${PIPELINE_ARGS[@]}"
