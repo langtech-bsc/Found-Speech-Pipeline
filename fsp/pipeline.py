@@ -30,6 +30,7 @@ from fsp.utils.paths import (
     resolve_lid_model_path,
     resolve_nemo_model_dir,
 )
+from fsp.utils.tsv import read_tsv_with_optional_header
 
 SINGULARITY_FALLBACK = Path("/apps/GPP/SINGULARITY/3.11.5/bin/singularity")
 
@@ -107,8 +108,11 @@ class Pipeline:
         if not input_tsv.is_file():
             raise FileNotFoundError(f"input file '{input_tsv}' not found")
 
-        # Load TSV (no header)
-        df = pd.read_csv(input_tsv, sep="\t", header=None, names=["wav_path", "text"], dtype=str)
+        df = read_tsv_with_optional_header(input_tsv)
+        if df.shape[1] < 2:
+            raise ValueError("TSV must contain at least 2 columns: wav_path, text")
+        df = df.iloc[:, :2].copy()
+        df.columns = ["wav_path", "text"]
 
         # Normalize text column
         df["normalized_text"] = df["text"].apply(lambda t: self._normalize_row(t, lang, mark))

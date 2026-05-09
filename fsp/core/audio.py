@@ -21,6 +21,7 @@ import soundfile as sf
 from loguru import logger
 
 from fsp.utils.paths import FFMPEG_CMD, INGESTION_DIR, NORM_DIR, OUT_DIR
+from fsp.utils.tsv import read_tsv_with_optional_header
 
 
 def select_tsv(input_id: str) -> Path:
@@ -67,7 +68,7 @@ def normalize_audio(
     wav_src = ingestion_dir / f"{input_id}.wav"
     tsv_src = select_tsv(input_id)
 
-    df = pd.read_csv(tsv_src, sep="\t", header=None, dtype=str)
+    df = read_tsv_with_optional_header(tsv_src)
     if df.shape[1] < 3:
         raise ValueError(
             "TSV must contain at least 3 columns: wav_path, original_text, normalized_text"
