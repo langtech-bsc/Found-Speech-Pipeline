@@ -1,0 +1,23 @@
+[project]
+name = "fsp-gl-enrichment"
+version = "0.1.0"
+description = "Isolated runtime for the Galician ASR enrichment sidecar"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "accelerate==1.2.1",
+    "backoff==2.2.1",
+    "librosa==0.10.2.post1",
+    "loguru==0.7.2",
+    "num2words>=0.5",
+    "pandas==2.1.1",
+    "peft==0.14.0",
+    "sentencepiece==0.2.0",
+    "soundfile==0.12.1",
+    "torch==2.5.1",
+    "transformers==4.49.0",
+]
+
+[tool.uv]
+package = false
+required-version = ">=0.11.15"
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]

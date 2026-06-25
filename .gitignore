@@ -45,3 +45,4 @@ test_runs/
 untracked_backups/
 *root_owned_backup/
 utils/models/
+deployment/containers/docker/.context/

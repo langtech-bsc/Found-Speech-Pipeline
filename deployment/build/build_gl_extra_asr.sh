@@ -38,6 +38,7 @@ echo "  Temp dir   : ${TMPDIR_BUILD}"
 echo "  Cache dir  : ${CACHE_DIR_BUILD}"
 echo "═══════════════════════════════════════════════════════════"
 
+cd "${REPO_ROOT}"
 "${BUILDER}" build "${SIF_NAME}" "${DEF_FILE}"
 
 echo

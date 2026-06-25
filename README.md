@@ -252,35 +252,53 @@ mkdir -p utils/models/fasttext utils/models
 wget -q "https://b2drop.bsc.es/index.php/s/x5kXGjTX7mYZFEN/download" \
   -O utils/models/fasttext/lid.176.bin
 
-# 3 - Create Python 3.11 virtual environment
-python3.11 -m venv venv
-source venv/bin/activate
+# 3 - Install uv, if it is not already available
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 4 - Install dependencies
-pip install -U pip setuptools wheel
-pip install "Cython>=0.29"
-pip install --no-build-isolation youtokentome==1.0.6
-PIP_NO_BUILD_ISOLATION=1 pip install -r requirements.txt
+# 4 - Create the Python 3.11 environment from the committed lockfile
+uv sync --locked
 
 # 5 - Create runtime directories
 mkdir -p ingestion merged
 
 # 6 - Download ASR models (both Catalan and Spanish)
-python scripts/download_models.py --lang all
+uv run python scripts/download_models.py --lang all
 ```
 
 Then run directly:
 
 ```bash
 # Single recording
-python pipeline_service.py --input-id my_recording --lang es
+uv run python pipeline_service.py --input-id my_recording --lang es
 
 # Batch from file (one input_id per line)
-python pipeline_service.py --input-id-file /path/to/ids.txt --lang es
+uv run python pipeline_service.py --input-id-file /path/to/ids.txt --lang es
 
 # Batch mode (all pairs in ingestion/)
-python pipeline_service.py --lang es
+uv run python pipeline_service.py --lang es
 ```
+
+### Dependency management
+
+The root `pyproject.toml` declares direct dependencies for the main pipeline,
+and `uv.lock` pins the complete reproducible environment. Do not edit the
+lockfile manually.
+
+```bash
+# Recreate the main runtime exactly
+uv sync --locked
+
+# Include test and formatting tools
+uv sync --locked --group dev
+
+# Validate changes to pyproject.toml before committing
+uv lock --check
+uv run --group dev pytest
+```
+
+The Galician enrichment sidecar is intentionally a separate uv project under
+`environments/gl-enrichment/`. It has its own lockfile because Phi-4 requires a
+newer Transformers stack than the main NeMo pipeline.
 
 ---
 

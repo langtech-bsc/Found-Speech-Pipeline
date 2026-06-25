@@ -11,6 +11,11 @@ From: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
     export HF_HUB_DISABLE_TELEMETRY=1
     export TRANSFORMERS_OFFLINE=1
     export HF_HUB_OFFLINE=1
+    export PATH=/opt/fsp-gl-enrichment/.venv/bin:$PATH
+
+%files
+    environments/gl-enrichment/pyproject.toml /opt/fsp-gl-enrichment/pyproject.toml
+    environments/gl-enrichment/uv.lock /opt/fsp-gl-enrichment/uv.lock
 
 %post
     export DEBIAN_FRONTEND=noninteractive
@@ -18,17 +23,9 @@ From: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
     apt-get install -y --no-install-recommends ffmpeg libsndfile1 git
     rm -rf /var/lib/apt/lists/*
 
-    python -m pip install --upgrade pip
-    python -m pip install \
-        accelerate==1.2.1 \
-        backoff==2.2.1 \
-        librosa==0.10.2.post1 \
-        loguru==0.7.2 \
-        num2words>=0.5 \
-        peft==0.14.0 \
-        sentencepiece==0.2.0 \
-        soundfile==0.12.1 \
-        transformers==4.49.0
+    python -m pip install --no-cache-dir uv==0.11.15
+    cd /opt/fsp-gl-enrichment
+    UV_PYTHON_DOWNLOADS=never uv sync --locked --no-dev --no-install-project
 
 %runscript
     exec python "$@"
