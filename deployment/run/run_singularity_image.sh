@@ -16,15 +16,15 @@ set -euo pipefail
 #   export FSP_INGESTION_DIR=/path/to/ingestion
 #   export FSP_INPUTS_DIR=/path/to/inputs
 #   export FSP_MERGED_DIR=/path/to/merged
-#   export MODELS_ROOT=/gpfs/projects/bsc88/speech/ASR/models
+#   export MODELS_ROOT=/path/to/models
 #   export LID_MODEL_PATH=/path/to/lid.176.bin
-#   export FSP_CACHE_DIR=/scratch/$USER/fsp_cache
+#   export FSP_CACHE_DIR=/path/to/cache
 # ===========================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SIF="${REPO_ROOT}/fsp-pipeline.sif"
-DEFAULT_MODELS_ROOT="/gpfs/projects/bsc88/speech/ASR/models"
+DEFAULT_MODELS_ROOT="${REPO_ROOT}/utils/models"
 CODE_SOURCE="image"
 PIPELINE_ARGS=()
 

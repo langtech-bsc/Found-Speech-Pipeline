@@ -32,7 +32,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-DEFAULT_SIF="/gpfs/projects/bsc88/singularity-images/fsp-pipeline.sif"
+DEFAULT_SIF="${REPO_ROOT}/fsp-pipeline.sif"
 
 if [[ -f "${REPO_ROOT}/.env" ]]; then
     # Allow local HPC overrides such as SIF=/path/to/image.sif.
