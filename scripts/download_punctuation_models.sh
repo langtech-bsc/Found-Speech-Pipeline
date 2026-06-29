@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_MODELS_ROOT="/gpfs/projects/bsc88/speech/ASR/models"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DEFAULT_MODELS_ROOT="${REPO_ROOT}/utils/models"
 MODELS_ROOT="${1:-${MODELS_ROOT:-$DEFAULT_MODELS_ROOT}}"
 
 REPOS=(

@@ -97,7 +97,7 @@ def resolve_images_dir(images_dir: str | Path | None = None) -> Path:
     if env_path := os.getenv(IMAGES_DIR_ENV_VAR):
         return Path(env_path).expanduser()
 
-    return Path("/gpfs/projects/bsc88/singularity-images/")
+    return ROOT
 
 
 def resolve_gl_extra_asr_image(images_dir: str | Path | None = None) -> Path:
