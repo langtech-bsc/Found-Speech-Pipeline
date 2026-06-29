@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=fsp-singularity
-#SBATCH --account=bsc88
-#SBATCH --qos=acc_debug
+##SBATCH --account=<your-account>
+##SBATCH --qos=<your-qos>
 #SBATCH --output=slurm_output/%x_%j.out
 #SBATCH --error=slurm_output/%x_%j.err
 #SBATCH --nodes=1
@@ -15,8 +15,9 @@ set -euo pipefail
 INPUT_ID="${1:-dtTCbYIHLps}"
 LANG="${2:-eu}"
 
-PROJECT_DIR="/gpfs/home/bsc/bsc700374/Found-Speech-Pipeline"
-DEFAULT_MODELS_ROOT="/gpfs/projects/bsc88/speech/ASR/models"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${PROJECT_DIR:-${SCRIPT_DIR}}"
+DEFAULT_MODELS_ROOT="${PROJECT_DIR}/utils/models"
 
 mkdir -p "${PROJECT_DIR}/slurm_output"
 mkdir -p "${PROJECT_DIR}/inputs" "${PROJECT_DIR}/merged"
